@@ -76,6 +76,8 @@ Open <walkthrough-editor-open-file filePath="codelab_agent/agent.py">codelab_age
 Start the interactive ADK Web UI:
 
 ```bash
+export GOOGLE_GENAI_USE_VERTEXAI="TRUE"
+export GOOGLE_CLOUD_LOCATION="us-central1"
 adk web --host 0.0.0.0 --port 8000 --allow_origins "*"
 ```
 
