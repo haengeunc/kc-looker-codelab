@@ -1,0 +1,18 @@
+# Python & virtualenvs
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ADK & temp build files
+.adk/
+looker_analyst_agent_tmp*/
+.agents/
+
+# Secrets & environment
+.env
+*.json
+!package.json
+!manifest.json
