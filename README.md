@@ -78,7 +78,7 @@ python3 publish_looker_to_kc.py --project "$GOOGLE_CLOUD_PROJECT"
 Start the interactive ADK Web UI in Cloud Shell:
 
 ```bash
-adk web --port 8000
+adk web --host 0.0.0.0 --port 8000 --allow_origins "*"
 ```
 
 1. In the top-right corner of Google Cloud Shell, click the **Web Preview** icon.

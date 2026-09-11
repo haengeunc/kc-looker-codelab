@@ -76,7 +76,7 @@ Open <walkthrough-editor-open-file filePath="codelab_agent/agent.py">codelab_age
 Start the interactive ADK Web UI:
 
 ```bash
-adk web --port 8000
+adk web --host 0.0.0.0 --port 8000 --allow_origins "*"
 ```
 
 Now click the <walkthrough-web-preview-icon></walkthrough-web-preview-icon> **Web Preview** icon in the top right of Cloud Shell and select **Preview on port 8000**.
