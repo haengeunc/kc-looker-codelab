@@ -1,5 +1,7 @@
 # Codelab: Grounding BigQuery Conversational Analytics with Knowledge Catalog & Looker Semantic Layer
 
+[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://console.cloud.google.com/cloudshell/open?git_repo=https://github.com/haengeunc/kc-looker-codelab&tutorial=tutorial.md)
+
 This codelab runs end-to-end in **Google Cloud Shell** on your Argolis project (`haengeun-429200`). It demonstrates how publishing Looker's Semantic Layer (`sample_thelook_ecommerce`) into **Dataplex Knowledge Catalog** eliminates LLM SQL hallucinations in **BigQuery Conversational Analytics (BQ CA API)**.
 
 ---
