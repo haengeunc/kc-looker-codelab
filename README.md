@@ -2,11 +2,23 @@
 
 [![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://console.cloud.google.com/cloudshell/open?git_repo=https://github.com/haengeunc/kc-looker-codelab&tutorial=tutorial.md)
 
-This codelab runs end-to-end in **Google Cloud Shell** on your Argolis project (`haengeun-429200`). It demonstrates how publishing Looker's Semantic Layer (`sample_thelook_ecommerce`) into **Dataplex Knowledge Catalog** eliminates LLM SQL hallucinations in **BigQuery Conversational Analytics (BQ CA API)**.
+This codelab runs end-to-end in **Google Cloud Shell** on your Argolis project (`haengeun-429200`). It demonstrates how **Looker's Native Semantic Layer (`@looker` in Dataplex Knowledge Catalog)** grounds **BigQuery Conversational Analytics (BQ CA API)** to eliminate LLM SQL hallucinations.
 
 ---
 
-## Step 1: Open Cloud Shell & Enable APIs (1 min)
+## How Native Looker + Knowledge Catalog Works
+
+1. **Automatic 1P Sync (`@looker` Entry Group)**:
+   When Looker (Google Cloud core) is hosted in your GCP project (`haengeun-429200`), Dataplex Knowledge Catalog automatically syncs your LookML Views, Explores, Models, and Dashboards into the Google-managed **`@looker` entry group** (`projects/{project}/locations/global/entryGroups/@looker`, `system=looker`).
+2. **Native Aspects Captured Automatically**:
+   - `655216118709.global.schema`: Lists all LookML **Dimensions and Measures** (names, data types, descriptions) for each View and Explore.
+   - `655216118709.global.looker-view` / `looker-explore`: Captures LookML model/explore relationships and upstream BigQuery table lineage.
+3. **Why We Also Attach the `overview` Aspect (`publish_looker_to_kc.py`)**:
+   While native 1P sync copies field names and descriptions into the `schema` aspect, it does not copy raw LookML `sql:` expressions (e.g., `SUM(sale_price - cost)`). Running `publish_looker_to_kc.py` searches for your existing native `@looker` entry (`order_items`) and attaches the `overview` aspect containing the exact LookML SQL formulas!
+
+---
+
+## Step 1: Open Cloud Shell, Enable APIs & Grant `roles/looker.schemaViewer` (1 min)
 
 Open [Google Cloud Shell](https://shell.cloud.google.com/?project=haengeun-429200) and run:
 
@@ -21,16 +33,20 @@ gcloud services enable \
   geminidataanalytics.googleapis.com \
   aiplatform.googleapis.com \
   --project="$GOOGLE_CLOUD_PROJECT"
+
+# REQUIRED IAM role to access native @looker entries in Knowledge Catalog
+gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+  --member="user:$(gcloud config get-value account)" \
+  --role="roles/looker.schemaViewer"
 ```
 
 ---
 
 ## Step 2: Set Up Python Environment in Cloud Shell (2 mins)
 
-In Cloud Shell, clone or navigate to the codelab directory and install the 5 required libraries:
-
 ```bash
-cd ~/kc-looker-codelab
+git clone https://github.com/haengeunc/kc-looker-codelab.git
+cd kc-looker-codelab
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -38,25 +54,21 @@ pip install -r requirements.txt
 
 ---
 
-## Step 3: Publish Looker's Semantic Layer (`sample_thelook_ecommerce`) to Knowledge Catalog (2 mins)
+## Step 3: Verify Native `@looker` Entries & Enrich with LookML SQL Formulas (2 mins)
 
-Looker's default `sample_thelook_ecommerce` project connects to `bigquery-public-data.thelook_ecommerce` and defines governed measures in `order_items.view.lkml`:
-- **Gross Merchandise Value (`total_gmv`)**: Excludes `Cancelled` orders (`status != 'Cancelled'`).
-- **Net Realized Revenue (`net_revenue`)**: Excludes both `Cancelled` and `Returned` orders (`status NOT IN ('Cancelled', 'Returned')`).
-- **Total Gross Margin (`total_gross_margin`)**: Joins `inventory_items` on `order_items.inventory_item_id = inventory_items.id` and computes `SUM(order_items.sale_price - inventory_items.cost)` for non-cancelled/non-returned items.
+Verify the Looker Views/Explores automatically synced into Knowledge Catalog under `@looker`:
 
-Run `publish_looker_to_kc.py` to publish this Looker semantic view into Dataplex Knowledge Catalog:
+```bash
+gcloud dataplex entries list \
+  --entry-group=@looker \
+  --location=global \
+  --project="$GOOGLE_CLOUD_PROJECT"
+```
+
+Then run `publish_looker_to_kc.py` to find your existing native `@looker` entry (`order_items`) and enrich its `overview` aspect with the governed LookML SQL formulas (`total_gmv`, `net_revenue`, `total_gross_margin`, `return_rate`):
 
 ```bash
 python3 publish_looker_to_kc.py --project "$GOOGLE_CLOUD_PROJECT"
-```
-
-Verify the Looker Semantic View entry is live in Knowledge Catalog:
-```bash
-gcloud dataplex entries list \
-  --entry-group=looker-semantic-layer \
-  --location=global \
-  --project="$GOOGLE_CLOUD_PROJECT"
 ```
 
 ---
@@ -71,7 +83,7 @@ adk web --port 8000
 
 1. In the top-right corner of Google Cloud Shell, click the **Web Preview** icon.
 2. Click **Preview on port 8000**.
-3. Select the **`codelab_agent`** from the dropdown menu.
+3. Select **`codelab_agent`** from the dropdown menu.
 
 ---
 
@@ -82,19 +94,16 @@ Ask the agent the following prompt:
 > **"What was our Total Gross Margin ($) and Net Realized Revenue in 2024?"**
 
 ### What Happens Behind the Scenes:
-1. **Without Looker + Knowledge Catalog (Baseline LLM Behavior)**:
-   - An ungrounded SQL generator guesses `SUM(sale_price)` across *all* rows (including `Cancelled` and `Returned` orders) and has no idea how `Gross Margin` is defined or how `inventory_items.cost` joins to `order_items`.
-2. **With Knowledge Catalog + Looker Semantic Layer (`kc_looker_bqca_agent`)**:
-   - **Tool Call 1 (`search_looker_knowledge_catalog`)**: The agent queries Dataplex for `system=Looker` and retrieves `sample_thelook_ecommerce.order_items` along with the exact LookML SQL formulas and join rules.
-   - **Tool Call 2 (`call_bigquery_conversational_analytics`)**: The agent invokes **BigQuery Conversational Analytics (`geminidataanalytics.googleapis.com`)** against `bigquery-public-data.thelook_ecommerce` and injects the LookML measure rules into BQ CA's `system_instruction`.
-   - **Governed SQL Generated by BQ CA**:
-     ```sql
-     SELECT
-       SUM(oi.sale_price) AS net_realized_revenue,
-       SUM(oi.sale_price - ii.cost) AS total_gross_margin
-     FROM `bigquery-public-data.thelook_ecommerce.order_items` AS oi
-     JOIN `bigquery-public-data.thelook_ecommerce.inventory_items` AS ii
-       ON oi.inventory_item_id = ii.id
-     WHERE oi.status NOT IN ('Cancelled', 'Returned')
-       AND EXTRACT(YEAR FROM oi.created_at) = 2024
-     ```
+1. **Tool Call 1 (`search_looker_knowledge_catalog`)**: The agent queries Dataplex for `system=looker` and extracts both the native `@looker` `schema` aspect (all LookML dimensions & measures) and the `overview` aspect (`sample_thelook_ecommerce.order_items` SQL formulas and join rules).
+2. **Tool Call 2 (`call_bigquery_conversational_analytics`)**: The agent invokes **BigQuery Conversational Analytics (`geminidataanalytics.googleapis.com`)** against `bigquery-public-data.thelook_ecommerce` and injects the LookML measure rules into BQ CA's `system_instruction`.
+3. **Governed SQL Generated by BQ CA**:
+   ```sql
+   SELECT
+     SUM(oi.sale_price) AS net_realized_revenue,
+     SUM(oi.sale_price - ii.cost) AS total_gross_margin
+   FROM `bigquery-public-data.thelook_ecommerce.order_items` AS oi
+   JOIN `bigquery-public-data.thelook_ecommerce.inventory_items` AS ii
+     ON oi.inventory_item_id = ii.id
+   WHERE oi.status NOT IN ('Cancelled', 'Returned')
+     AND EXTRACT(YEAR FROM oi.created_at) = 2024
+   ```
