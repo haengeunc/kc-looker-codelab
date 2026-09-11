@@ -4,14 +4,18 @@ This agent demonstrates how native Looker (Google Cloud core) semantic entries (
 Knowledge Catalog) ground BigQuery Conversational Analytics (BQ CA API) to eliminate SQL hallucinations.
 """
 
+from functools import cached_property
 import json
 import os
+import subprocess
 import uuid
 from google.adk.agents import LlmAgent
+from google.adk.models import Gemini
 from google.api_core import client_options
-import google.auth
+import google.auth.credentials
 from google.cloud import dataplex_v1
 from google.cloud import geminidataanalytics_v1beta as geminidataanalytics
+from google.genai import Client
 import google.protobuf.json_format as jsonpb
 
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
@@ -20,6 +24,43 @@ os.environ.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
 OVERVIEW_ASPECT_KEY = "655216118709.global.overview"
 SCHEMA_ASPECT_KEY = "655216118709.global.schema"
+
+
+class CloudShellCredentials(google.auth.credentials.Credentials):
+  """Credentials using `gcloud auth print-access-token` to bypass Cloud Shell's GCE metadata server bug."""
+
+  def __init__(self):
+    super().__init__()
+    self.refresh(None)
+
+  def refresh(self, request):
+    self.token = (
+        subprocess.check_output(
+            ["gcloud", "auth", "print-access-token"],
+            stderr=subprocess.DEVNULL,
+        )
+        .decode("utf-8")
+        .strip()
+    )
+
+
+def get_credentials() -> google.auth.credentials.Credentials:
+  """Returns working Google Cloud credentials in Cloud Shell without triggering GCE Metadata RefreshError."""
+  return CloudShellCredentials()
+
+
+class CloudShellGemini(Gemini):
+  """Gemini model configured with CloudShellCredentials for Vertex AI."""
+
+  @cached_property
+  def api_client(self) -> Client:
+    return Client(
+        vertexai=True,
+        project=PROJECT_ID,
+        location="us-central1",
+        credentials=get_credentials(),
+    )
+
 
 # Default tables from Looker's sample_thelook_ecommerce BigQuery connection
 DEFAULT_THELOOK_TABLES = [
@@ -59,7 +100,7 @@ def search_looker_knowledge_catalog(query: str) -> str:
   2. Native `looker-view` / `looker-explore` aspect metadata.
   3. Any `overview` aspect or description attached to the entry.
   """
-  client = dataplex_v1.CatalogServiceClient()
+  client = dataplex_v1.CatalogServiceClient(credentials=get_credentials())
   location_name = f"projects/{PROJECT_ID}/locations/global"
 
   # Search across native 1P Looker entries (@looker / system=looker)
@@ -133,7 +174,7 @@ def call_bigquery_conversational_analytics(
     question: str, lookml_grounding_rules: str
 ) -> str:
   """Calls BigQuery Conversational Analytics API (BQ CA) grounded with Looker semantic layer rules."""
-  creds, _ = google.auth.default()
+  creds = get_credentials()
   opts = client_options.ClientOptions(
       api_endpoint="geminidataanalytics.googleapis.com"
   )
@@ -245,7 +286,7 @@ In your final answer:
 
 root_agent = LlmAgent(
     name="kc_looker_bqca_agent",
-    model="gemini-2.5-flash",
+    model=CloudShellGemini(model="gemini-2.5-flash"),
     instruction=INSTRUCTION,
     tools=[
         search_looker_knowledge_catalog,

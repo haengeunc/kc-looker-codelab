@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
 """Discovers native Looker (`@looker`) entries in Knowledge Catalog and enriches them with LookML SQL formulas.
 
-Why this script exists:
-1. Looker (Google Cloud core) automatically syncs Views, Explores, Models, and Dashboards
-   into Dataplex Knowledge Catalog under the `@looker` entry group (`system=looker`).
-2. However, the native 1P sync populates the `schema` aspect (field names, data types, and descriptions)
-   but does NOT copy the raw LookML `sql:` expression text (e.g. `SUM(sale_price - cost)`).
-3. Just like `lookml-to-kc` in `datacloud-ai-innovation`, this script searches for your existing
-   native `@looker` entry in Knowledge Catalog and attaches the `overview` aspect containing the
-   governed LookML SQL formulas! (If no native `@looker` entry is found, it creates a fallback entry).
-
 Run in Cloud Shell:
     python3 publish_looker_to_kc.py --project haengeun-429200
 """
 
 import argparse
 import os
+import subprocess
 from google.api_core.exceptions import AlreadyExists
+import google.auth.credentials
 from google.cloud import dataplex_v1
 from google.protobuf import field_mask_pb2
 from google.protobuf import struct_pb2
@@ -25,8 +18,26 @@ OVERVIEW_ASPECT_KEY = "655216118709.global.overview"
 OVERVIEW_ASPECT_TYPE = "projects/dataplex-types/locations/global/aspectTypes/overview"
 
 
+class CloudShellCredentials(google.auth.credentials.Credentials):
+  """Credentials using `gcloud auth print-access-token` to bypass Cloud Shell's GCE metadata server bug."""
+
+  def __init__(self):
+    super().__init__()
+    self.refresh(None)
+
+  def refresh(self, request):
+    self.token = (
+        subprocess.check_output(
+            ["gcloud", "auth", "print-access-token"],
+            stderr=subprocess.DEVNULL,
+        )
+        .decode("utf-8")
+        .strip()
+    )
+
+
 def enrich_or_publish_looker_kc(project_id: str, location: str = "global") -> None:
-  client = dataplex_v1.CatalogServiceClient()
+  client = dataplex_v1.CatalogServiceClient(credentials=CloudShellCredentials())
   location_name = f"projects/{project_id}/locations/{location}"
 
   # Read the LookML view file and build the Semantic Overview
