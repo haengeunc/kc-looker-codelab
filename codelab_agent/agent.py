@@ -15,6 +15,9 @@ from google.cloud import geminidataanalytics_v1beta as geminidataanalytics
 import google.protobuf.json_format as jsonpb
 
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
 OVERVIEW_ASPECT_KEY = "655216118709.global.overview"
 SCHEMA_ASPECT_KEY = "655216118709.global.schema"
 
