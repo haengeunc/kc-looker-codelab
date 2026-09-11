@@ -9,12 +9,12 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from looker_analyst_agent.agent import root_agent
+from looker_analyst_agent.agent import PROJECT_ID, root_agent
 
 # Ensure Vertex AI configuration
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "1")
-os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
-os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
 
 async def ask_analyst(question: str):
@@ -22,7 +22,7 @@ async def ask_analyst(question: str):
     session_service = InMemorySessionService()
     session = await session_service.create_session(
         app_name="looker_analyst_app",
-        user_id="haengeun",
+        user_id="demo_user",
     )
     runner = Runner(
         agent=root_agent,
@@ -40,7 +40,7 @@ async def ask_analyst(question: str):
     )
 
     async for event in runner.run_async(
-        user_id="haengeun",
+        user_id="demo_user",
         session_id=session.id,
         new_message=content,
     ):

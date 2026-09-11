@@ -15,9 +15,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY looker_analyst_agent /app/looker_analyst_agent
 
-# Cloud Run defaults
+# Cloud Run defaults (override GOOGLE_CLOUD_PROJECT at deploy time)
 ENV GOOGLE_GENAI_USE_VERTEXAI=1
-ENV GOOGLE_CLOUD_PROJECT=haengeun-429200
+ENV GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT
 ENV GOOGLE_CLOUD_LOCATION=us-central1
 ENV PORT=8080
 

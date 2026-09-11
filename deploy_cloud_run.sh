@@ -3,9 +3,16 @@
 
 set -euo pipefail
 
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-haengeun-429200}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-looker-analyst-agent}"
+
+if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
+  echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
+  echo "Run: export GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT"
+  exit 1
+fi
 
 echo "================================================================"
 echo " Deploying Looker Analyst Agent to Cloud Run"
@@ -33,10 +40,15 @@ for ROLE in \
     --quiet >/dev/null
 done
 
-# 2. Deploy via ADK CLI (or gcloud run deploy --source .)
-# Option A: Using ADK native Cloud Run deployer (includes ADK Web UI via --with_ui)
+# 2. Resolve adk CLI executable
+ADK_BIN="adk"
+if [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
+fi
+
+# 3. Deploy via ADK CLI (includes ADK Web UI via --with_ui and A2A endpoint via --a2a)
 echo "Deploying via adk deploy cloud_run (with Web UI and A2A protocol enabled)..."
-/usr/local/google/home/haengeun/projects/demo-kc-bq/.venv/bin/adk deploy cloud_run \
+"$ADK_BIN" deploy cloud_run \
   --project="$PROJECT_ID" \
   --region="$REGION" \
   --service_name="$SERVICE_NAME" \
@@ -45,5 +57,5 @@ echo "Deploying via adk deploy cloud_run (with Web UI and A2A protocol enabled).
   --env GOOGLE_GENAI_USE_VERTEXAI=1 \
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
-  /usr/local/google/home/haengeun/projects/demo-kc-bq/looker_analyst_agent \
+  "${SCRIPT_DIR}/looker_analyst_agent" \
   -- --allow-unauthenticated

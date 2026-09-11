@@ -4,9 +4,16 @@
 
 set -euo pipefail
 
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-haengeun-429200}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 DISPLAY_NAME="${DISPLAY_NAME:-Looker Knowledge Catalog Analyst Agent}"
+
+if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
+  echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
+  echo "Run: export GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT"
+  exit 1
+fi
 
 echo "================================================================"
 echo " Deploying Looker Analyst Agent to Vertex AI Agent Engine"
@@ -34,10 +41,16 @@ for ROLE in \
     --quiet >/dev/null || true
 done
 
-# 2. Deploy via ADK CLI to Vertex AI Agent Engine
-/usr/local/google/home/haengeun/projects/demo-kc-bq/.venv/bin/adk deploy agent_engine \
+# 2. Resolve adk CLI executable
+ADK_BIN="adk"
+if [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
+fi
+
+# 3. Deploy via ADK CLI to Vertex AI Agent Engine
+"$ADK_BIN" deploy agent_engine \
   --project="$PROJECT_ID" \
   --region="$REGION" \
   --display_name="$DISPLAY_NAME" \
   --description="Enterprise Data Analyst Agent grounded in Looker semantic metadata from Knowledge Catalog (Dataplex) and BigQuery." \
-  /usr/local/google/home/haengeun/projects/demo-kc-bq/looker_analyst_agent
+  "${SCRIPT_DIR}/looker_analyst_agent"

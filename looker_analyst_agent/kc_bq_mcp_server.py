@@ -10,7 +10,9 @@ Provides tools to:
 
 import json
 import os
+import shutil
 import subprocess
+import time
 from typing import Any, Dict, List, Optional
 import requests
 try:
@@ -21,16 +23,31 @@ except ImportError:
 # Initialize MCP Server
 mcp = FastMCP("KnowledgeCatalog-BigQuery-Looker-Analyst-MCP")
 
-DEFAULT_PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
-DEFAULT_LOCATION = os.environ.get("DATAPLEX_LOCATION", "europe-west4")
+
+def _detect_default_project() -> str:
+    """Detects GCP project from env, gcloud config, or defaults to YOUR-GCP-PROJECT."""
+    for env_var in ("GOOGLE_CLOUD_PROJECT", "GCP_PROJECT", "DEVSHELL_PROJECT_ID"):
+        val = os.environ.get(env_var)
+        if val:
+            return val
+    try:
+        out = subprocess.check_output(
+            ["gcloud", "config", "get-value", "project"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        if out and out != "(unset)":
+            return out
+    except Exception:
+        pass
+    return "YOUR-GCP-PROJECT"
 
 
-import time
+DEFAULT_PROJECT_ID = _detect_default_project()
+DEFAULT_LOCATION = os.environ.get("DATAPLEX_LOCATION", "us-central1")
+LOOKER_MODEL_NAME = os.environ.get("LOOKER_MODEL_NAME", "customer_orders")
 
 _TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0}
-
-
-import shutil
 
 
 def _get_access_token() -> str:
@@ -46,7 +63,7 @@ def _get_access_token() -> str:
         _TOKEN_CACHE["expires_at"] = now + 3000
         return _TOKEN_CACHE["token"]
 
-    # 2. Native Cloud Run / GCE Metadata Server (instant inside Cloud Run)
+    # 2. Native Cloud Run / GCE Metadata Server (instant inside Cloud Run / Agent Engine)
     try:
         meta_resp = requests.get(
             "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
@@ -93,7 +110,7 @@ def _get_access_token() -> str:
             return _TOKEN_CACHE["token"]
 
     raise RuntimeError(
-        "Unable to obtain Google Cloud access token. On Cloud Run, ensure the service account has "
+        "Unable to obtain Google Cloud access token. On Cloud Run / Agent Engine, ensure the service account has "
         "Dataplex and BigQuery IAM roles. Locally, run `gcloud auth login`."
     )
 
@@ -117,7 +134,7 @@ def search_knowledge_catalog(
     Args:
         query: Search term (e.g., "customer_orders", "order_items", "net_revenue", "users", "products").
         system: Source system filter. Defaults to "LOOKER" (use "" for all systems).
-        project_id: Google Cloud Project ID (default: haengeun-429200).
+        project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
 
     Returns:
         Dictionary containing matching Knowledge Catalog entries with their entryName, entryType,
@@ -162,22 +179,15 @@ def get_looker_explore_metadata(
     """Retrieve the complete Looker Explore definition from Knowledge Catalog (Dataplex).
 
     Returns the base viewName, all joins (with sqlOn, relationship, and join type),
-    pre-built LookML queries, and any data-certification aspects.
+    pre-built LookML queries, and any optional governance/certification aspects.
 
     Args:
         entry_name: Full Dataplex entry name (e.g.
-            "projects/haengeun-429200/locations/europe-west4/entryGroups/@looker/entries/..."
+            "projects/YOUR-GCP-PROJECT/locations/us-central1/entryGroups/@looker/entries/..."
             returned by search_knowledge_catalog).
-        project_id: Google Cloud Project ID (default: haengeun-429200).
+        project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
     """
-    # Normalize project number to project_id if needed
-    normalized_name = entry_name
-    if normalized_name.startswith("projects/2599363625/"):
-        normalized_name = normalized_name.replace(
-            "projects/2599363625/", f"projects/{project_id}/", 1
-        )
-
-    url = f"https://dataplex.googleapis.com/v1/{normalized_name}?view=FULL"
+    url = f"https://dataplex.googleapis.com/v1/{entry_name}?view=FULL"
     resp = requests.get(url, headers=_headers(project_id), timeout=30)
     if resp.status_code != 200:
         return {"error": f"HTTP {resp.status_code}: {resp.text}"}
@@ -219,16 +229,10 @@ def get_looker_view_metadata(
 
     Args:
         entry_name: Full Dataplex entry name for a Looker View (e.g.
-            "projects/haengeun-429200/locations/europe-west4/entryGroups/@looker/entries/.../views/order_items").
-        project_id: Google Cloud Project ID (default: haengeun-429200).
+            "projects/YOUR-GCP-PROJECT/locations/us-central1/entryGroups/@looker/entries/.../views/order_items").
+        project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
     """
-    normalized_name = entry_name
-    if normalized_name.startswith("projects/2599363625/"):
-        normalized_name = normalized_name.replace(
-            "projects/2599363625/", f"projects/{project_id}/", 1
-        )
-
-    url = f"https://dataplex.googleapis.com/v1/{normalized_name}?view=FULL"
+    url = f"https://dataplex.googleapis.com/v1/{entry_name}?view=FULL"
     resp = requests.get(url, headers=_headers(project_id), timeout=30)
     if resp.status_code != 200:
         return {"error": f"HTTP {resp.status_code}: {resp.text}"}
@@ -291,7 +295,7 @@ def execute_bigquery_sql(
 
     Args:
         sql: The BigQuery Standard SQL query string.
-        project_id: Google Cloud Project ID to bill the query (default: haengeun-429200).
+        project_id: Google Cloud Project ID to bill the query (default: auto-detected or YOUR-GCP-PROJECT).
     """
     # Prevent accidental destructive DDL/DML
     forbidden = ["DROP ", "TRUNCATE ", "DELETE ", "ALTER ", "UPDATE ", "INSERT "]
@@ -339,7 +343,7 @@ def list_looker_views_in_explore(
 
     Args:
         explore_entry_name: Full Dataplex entry name of the Looker Explore.
-        project_id: Google Cloud Project ID (default: haengeun-429200).
+        project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
     """
     explore_meta = get_looker_explore_metadata(explore_entry_name, project_id)
     if "error" in explore_meta:
@@ -349,8 +353,6 @@ def list_looker_views_in_explore(
     joined_views = [j.get("name") for j in explore_meta.get("joins", []) if j.get("name")]
     all_view_names = [base_view] + joined_views if base_view else joined_views
 
-    # Derive parent model path from the explore entry name
-    # e.g. .../models/thelook_ecommerce_haengeun_us/explores/customer_orders -> .../models/thelook_ecommerce_haengeun_us/views/{view}
     parent_model_prefix = explore_meta["entryName"].split("/explores/")[0]
 
     view_entries = {}
@@ -376,7 +378,7 @@ def check_lookml_in_knowledge_catalog(
 
     Args:
         explore_query: Name of the Looker Explore in Knowledge Catalog (default: "customer_orders").
-        project_id: Google Cloud Project ID (default: haengeun-429200).
+        project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
     """
     search_res = search_knowledge_catalog(explore_query, system="LOOKER", project_id=project_id)
     explore_entry = None
@@ -385,14 +387,11 @@ def check_lookml_in_knowledge_catalog(
             explore_entry = item.get("entryName")
             break
 
-    # If searchEntries returned 0 results (e.g. Dataplex search index filtering for service accounts),
-    # directly look up the known @looker Dataplex entry path for haengeun_argolis_demo
+    # Direct @looker entry group fallback if searchEntries is filtered by IAM / service account
     if not explore_entry:
         explore_entry = (
-            f"projects/{project_id}/locations/europe-west4/entryGroups/@looker/entries/"
-            f"looker.googleapis.com/projects/{project_id}/locations/europe-west4/instances/"
-            f"looker-core-haengeun-429200/lookml_projects/haengeun_argolis_demo/models/"
-            f"thelook_ecommerce_haengeun_us/explores/{explore_query}"
+            f"projects/{project_id}/locations/{DEFAULT_LOCATION}/entryGroups/@looker/entries/"
+            f"looker/explores/{LOOKER_MODEL_NAME}.{explore_query}"
         )
 
     explore_meta = get_looker_explore_metadata(explore_entry, project_id)
@@ -428,7 +427,7 @@ def check_lookml_in_knowledge_catalog(
                 "views": views_metadata,
             }
 
-    # Guaranteed fallback to the certified LookML semantic layer definition for customer_orders
+    # Certified LookML semantic layer reference snapshot for customer_orders
     return {
         "catalogSource": "Google Cloud Knowledge Catalog (Dataplex Certified LookML Snapshot)",
         "exploreName": "Customers & Orders (customer_orders)",
@@ -460,7 +459,7 @@ def check_lookml_in_knowledge_catalog(
         "views": {
             "order_items": {
                 "sourceTable": "`bigquery-public-data.thelook_ecommerce.order_items`",
-                "sourceFilePath": "haengeun_argolis_demo/views/order_items.view.lkml",
+                "sourceFilePath": "views/order_items.view.lkml",
                 "dimensions": [
                     {"name": "id", "semantic": "DIMENSION", "sql": "${TABLE}.id"},
                     {"name": "order_id", "semantic": "DIMENSION", "sql": "${TABLE}.order_id"},
@@ -502,7 +501,7 @@ def check_lookml_in_knowledge_catalog(
             },
             "users": {
                 "sourceTable": "`bigquery-public-data.thelook_ecommerce.users`",
-                "sourceFilePath": "haengeun_argolis_demo/views/users.view.lkml",
+                "sourceFilePath": "views/users.view.lkml",
                 "dimensions": [
                     {"name": "id", "semantic": "DIMENSION", "sql": "${TABLE}.id"},
                     {"name": "country", "semantic": "DIMENSION", "sql": "${TABLE}.country"},
@@ -513,7 +512,7 @@ def check_lookml_in_knowledge_catalog(
             },
             "products": {
                 "sourceTable": "`bigquery-public-data.thelook_ecommerce.products`",
-                "sourceFilePath": "haengeun_argolis_demo/views/products.view.lkml",
+                "sourceFilePath": "views/products.view.lkml",
                 "dimensions": [
                     {"name": "id", "semantic": "DIMENSION", "sql": "${TABLE}.id"},
                     {"name": "category", "semantic": "DIMENSION", "sql": "${TABLE}.category"},
@@ -526,12 +525,9 @@ def check_lookml_in_knowledge_catalog(
     }
 
 
-
 # Backward-compatible alias
 resolve_looker_explore_and_views = check_lookml_in_knowledge_catalog
 
 
-
 if __name__ == "__main__":
     mcp.run()
-

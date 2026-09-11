@@ -1,6 +1,8 @@
 """Vertex AI / ADK Analyst Agent connected to Knowledge Catalog MCP & BigQuery MCP Toolbox."""
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 import google.auth
@@ -16,15 +18,34 @@ from looker_analyst_agent.kc_bq_mcp_server import (
 )
 from looker_analyst_agent.prompt import LOOKER_ANALYST_PROMPT
 
+
+def _detect_default_project() -> str:
+    """Detects GCP project from env, gcloud config, or defaults to YOUR-GCP-PROJECT."""
+    for env_var in ("GOOGLE_CLOUD_PROJECT", "GCP_PROJECT", "DEVSHELL_PROJECT_ID"):
+        val = os.environ.get(env_var)
+        if val:
+            return val
+    try:
+        out = subprocess.check_output(
+            ["gcloud", "config", "get-value", "project"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode().strip()
+        if out and out != "(unset)":
+            return out
+    except Exception:
+        pass
+    return "YOUR-GCP-PROJECT"
+
+
 # Configure Vertex AI environment defaults
+PROJECT_ID = _detect_default_project()
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "1")
-os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
-os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "us-central1")
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
-
-# Resilient Google Auth bridge: automatically uses Cloud Run metadata or gcloud CLI
-# when Application Default Credentials (ADC) RAPT token is expired locally.
+# Resilient Google Auth bridge: automatically uses Cloud Run / Agent Engine metadata server
+# or gcloud CLI when Application Default Credentials (ADC) RAPT token is expired locally.
 if not hasattr(google.auth, "_orig_default"):
     google.auth._orig_default = google.auth.default
 _orig_google_auth_default = google.auth._orig_default
@@ -56,7 +77,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParameters
 
 MCP_SERVER_SCRIPT = str((Path(__file__).parent / "kc_bq_mcp_server.py").resolve())
-TOOLBOX_BINARY = "/usr/local/google/home/haengeun/.local/bin/toolbox"
+TOOLBOX_BINARY = shutil.which("toolbox") or os.path.expanduser("~/.local/bin/toolbox")
 
 
 def build_agent_tools():
@@ -79,7 +100,7 @@ def build_agent_tools():
                     args=[MCP_SERVER_SCRIPT],
                     env={
                         "GOOGLE_CLOUD_PROJECT": PROJECT_ID,
-                        "DATAPLEX_LOCATION": "europe-west4",
+                        "DATAPLEX_LOCATION": os.environ.get("DATAPLEX_LOCATION", "us-central1"),
                         "PATH": os.environ.get("PATH", ""),
                     },
                 )
