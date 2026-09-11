@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
-"""Publishes LookML semantic definitions from `sample_thelook_ecommerce` into Dataplex Knowledge Catalog.
+"""Discovers native Looker (`@looker`) entries in Knowledge Catalog and enriches them with LookML SQL formulas.
 
-Run directly in Google Cloud Shell:
+Why this script exists:
+1. Looker (Google Cloud core) automatically syncs Views, Explores, Models, and Dashboards
+   into Dataplex Knowledge Catalog under the `@looker` entry group (`system=looker`).
+2. However, the native 1P sync populates the `schema` aspect (field names, data types, and descriptions)
+   but does NOT copy the raw LookML `sql:` expression text (e.g. `SUM(sale_price - cost)`).
+3. Just like `lookml-to-kc` in `datacloud-ai-innovation`, this script searches for your existing
+   native `@looker` entry in Knowledge Catalog and attaches the `overview` aspect containing the
+   governed LookML SQL formulas! (If no native `@looker` entry is found, it creates a fallback entry).
+
+Run in Cloud Shell:
     python3 publish_looker_to_kc.py --project haengeun-429200
 """
 
@@ -9,49 +18,18 @@ import argparse
 import os
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import dataplex_v1
+from google.protobuf import field_mask_pb2
 from google.protobuf import struct_pb2
 
 OVERVIEW_ASPECT_KEY = "655216118709.global.overview"
 OVERVIEW_ASPECT_TYPE = "projects/dataplex-types/locations/global/aspectTypes/overview"
 
 
-def publish_lookml_view_to_kc(project_id: str, location: str = "global") -> None:
+def enrich_or_publish_looker_kc(project_id: str, location: str = "global") -> None:
   client = dataplex_v1.CatalogServiceClient()
-  entry_group_id = "looker-semantic-layer"
-  entry_type_id = "looker-view"
-  parent = f"projects/{project_id}/locations/{location}"
+  location_name = f"projects/{project_id}/locations/{location}"
 
-  # 1. Ensure Entry Group exists
-  entry_group_path = f"{parent}/entryGroups/{entry_group_id}"
-  try:
-    client.create_entry_group(
-        parent=parent,
-        entry_group_id=entry_group_id,
-        entry_group=dataplex_v1.EntryGroup(
-            display_name="Looker Semantic Layer (sample_thelook_ecommerce)",
-            description="Governed LookML views, explores, and measures from sample_thelook_ecommerce",
-        ),
-    ).result()
-    print(f"✅ Created Entry Group: {entry_group_path}")
-  except AlreadyExists:
-    print(f"✅ Entry Group already exists: {entry_group_path}")
-
-  # 2. Ensure Entry Type `looker-view` exists
-  entry_type_path = f"{parent}/entryTypes/{entry_type_id}"
-  try:
-    client.create_entry_type(
-        parent=parent,
-        entry_type_id=entry_type_id,
-        entry_type=dataplex_v1.EntryType(
-            display_name="Looker View",
-            description="LookML View containing governed dimensions, measures, and SQL definitions",
-        ),
-    ).result()
-    print(f"✅ Created Entry Type: {entry_type_path}")
-  except AlreadyExists:
-    print(f"✅ Entry Type already exists: {entry_type_path}")
-
-  # 3. Read the LookML view file and build the Semantic Overview
+  # Read the LookML view file and build the Semantic Overview
   lookml_path = os.path.join(
       os.path.dirname(__file__),
       "sample_thelook_ecommerce",
@@ -82,17 +60,79 @@ def publish_lookml_view_to_kc(project_id: str, location: str = "global") -> None
 {lookml_content}
 """
 
-  # 4. Upsert the Catalog Entry
+  aspect_data = struct_pb2.Struct()
+  aspect_data.update({"content": semantic_overview})
+  overview_aspect = dataplex_v1.Aspect(
+      aspect_type=OVERVIEW_ASPECT_TYPE,
+      data=aspect_data,
+  )
+
+  # 1. Search for an existing native `@looker` entry synced from Looker Core
+  print("🔍 Searching Knowledge Catalog for native `@looker` entries (order_items)...")
+  req = dataplex_v1.SearchEntriesRequest(
+      name=location_name,
+      query="order_items system=looker",
+      page_size=10,
+  )
+  matches = list(client.search_entries(request=req).results)
+  native_entry_name = None
+  for m in matches:
+    name = m.dataplex_entry.name
+    if "/entryGroups/@looker/" in name:
+      native_entry_name = name
+      break
+
+  if native_entry_name:
+    print(f"✅ Found native 1P Looker entry in `@looker`: {native_entry_name}")
+    print("📝 Attaching LookML SQL formulas (`overview` aspect) to native `@looker` entry...")
+    entry = dataplex_v1.Entry(
+        name=native_entry_name,
+        aspects={OVERVIEW_ASPECT_KEY: overview_aspect},
+    )
+    client.update_entry(
+        entry=entry,
+        update_mask=field_mask_pb2.FieldMask(paths=["aspects"]),
+    )
+    print(f"✅ Enriched native `@looker` entry: {native_entry_name}")
+    return
+
+  # 2. Fallback if the GCP project does not have a Looker (Google Cloud core) instance synced yet
+  print("ℹ️ No native `@looker` entry found in this project. Creating fallback entry in `looker-semantic-layer`...")
+  entry_group_id = "looker-semantic-layer"
+  entry_type_id = "looker-view"
+  entry_group_path = f"{location_name}/entryGroups/{entry_group_id}"
+  entry_type_path = f"{location_name}/entryTypes/{entry_type_id}"
+
+  try:
+    client.create_entry_group(
+        parent=location_name,
+        entry_group_id=entry_group_id,
+        entry_group=dataplex_v1.EntryGroup(
+            display_name="Looker Semantic Layer (sample_thelook_ecommerce)",
+            description="Governed LookML views, explores, and measures from sample_thelook_ecommerce",
+        ),
+    ).result()
+  except AlreadyExists:
+    pass
+
+  try:
+    client.create_entry_type(
+        parent=location_name,
+        entry_type_id=entry_type_id,
+        entry_type=dataplex_v1.EntryType(
+            display_name="Looker View",
+            description="LookML View containing governed dimensions, measures, and SQL definitions",
+        ),
+    ).result()
+  except AlreadyExists:
+    pass
+
   entry_id = "thelook-ecommerce-order-items-view"
   entry_path = f"{entry_group_path}/entries/{entry_id}"
-
   try:
     client.delete_entry(name=entry_path)
   except Exception:
     pass
-
-  aspect_data = struct_pb2.Struct()
-  aspect_data.update({"content": semantic_overview})
 
   entry = dataplex_v1.Entry(
       entry_type=entry_type_path,
@@ -103,20 +143,14 @@ def publish_lookml_view_to_kc(project_id: str, location: str = "global") -> None
           display_name="Looker View: order_items (sample_thelook_ecommerce)",
           description="Governed LookML semantic measures (Net Revenue, GMV, Gross Margin, Return Rate) for bigquery-public-data.thelook_ecommerce",
       ),
-      aspects={
-          OVERVIEW_ASPECT_KEY: dataplex_v1.Aspect(
-              aspect_type=OVERVIEW_ASPECT_TYPE,
-              data=aspect_data,
-          )
-      },
+      aspects={OVERVIEW_ASPECT_KEY: overview_aspect},
   )
-
   client.create_entry(
       parent=entry_group_path,
       entry_id=entry_id,
       entry=entry,
   )
-  print(f"✅ Published LookML Semantic View to Knowledge Catalog: {entry_path}")
+  print(f"✅ Published fallback Looker Semantic View to Knowledge Catalog: {entry_path}")
 
 
 if __name__ == "__main__":
@@ -127,4 +161,4 @@ if __name__ == "__main__":
       help="GCP Project ID",
   )
   args = parser.parse_args()
-  publish_lookml_view_to_kc(args.project)
+  enrich_or_publish_looker_kc(args.project)

@@ -1,9 +1,10 @@
-"""Minimal Cloud Shell Codelab Agent: Knowledge Catalog + Looker Semantic Layer + BigQuery CA API.
+"""Minimal Cloud Shell Codelab Agent: Knowledge Catalog + Native Looker Semantic Layer + BigQuery CA API.
 
-This agent demonstrates how Looker semantic definitions (published in Dataplex Knowledge Catalog)
-ground BigQuery Conversational Analytics (BQ CA API) to eliminate SQL hallucinations.
+This agent demonstrates how native Looker (Google Cloud core) semantic entries (`@looker` in Dataplex
+Knowledge Catalog) ground BigQuery Conversational Analytics (BQ CA API) to eliminate SQL hallucinations.
 """
 
+import json
 import os
 import uuid
 from google.adk.agents import LlmAgent
@@ -15,6 +16,7 @@ import google.protobuf.json_format as jsonpb
 
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "haengeun-429200")
 OVERVIEW_ASPECT_KEY = "655216118709.global.overview"
+SCHEMA_ASPECT_KEY = "655216118709.global.schema"
 
 # Default tables from Looker's sample_thelook_ecommerce BigQuery connection
 DEFAULT_THELOOK_TABLES = [
@@ -47,19 +49,29 @@ DEFAULT_THELOOK_TABLES = [
 
 
 def search_looker_knowledge_catalog(query: str) -> str:
-  """Searches Dataplex Knowledge Catalog for Looker semantic layer views, measures, and SQL definitions."""
+  """Searches Dataplex Knowledge Catalog for native Looker entries (`@looker`, system=looker).
+
+  Extracts:
+  1. Native `schema` aspect (LookML dimensions & measures synced automatically from Looker Core).
+  2. Native `looker-view` / `looker-explore` aspect metadata.
+  3. Any `overview` aspect or description attached to the entry.
+  """
   client = dataplex_v1.CatalogServiceClient()
   location_name = f"projects/{PROJECT_ID}/locations/global"
 
+  # Search across native 1P Looker entries (@looker / system=looker)
   req = dataplex_v1.SearchEntriesRequest(
       name=location_name,
-      query=f"{query} system=Looker",
-      page_size=5,
+      query=f"{query} system=looker",
+      page_size=10,
       semantic_search=True,
   )
   results = list(client.search_entries(request=req).results)
   if not results:
-    return "No Looker semantic entries found in Knowledge Catalog."
+    return (
+        "No Looker entries found in Knowledge Catalog. Ensure Looker (Google Cloud core) "
+        "is synced to Dataplex and your user has `roles/looker.schemaViewer`."
+    )
 
   output = []
   for item in results:
@@ -69,14 +81,49 @@ def search_looker_knowledge_catalog(query: str) -> str:
     )
     entry_dict = jsonpb.MessageToDict(full_entry._pb)
     aspects = entry_dict.get("aspects", {})
+
+    # 1. Extract native Looker Schema Aspect (Dimensions & Measures)
+    schema_fields = (
+        aspects.get(SCHEMA_ASPECT_KEY, {}).get("data", {}).get("fields", [])
+    )
+    fields_summary = []
+    for f in schema_fields:
+      fname = f.get("name", "")
+      fdesc = f.get("description", "")
+      ftype = f.get("dataType", "")
+      fields_summary.append(f"  - `{fname}` ({ftype}): {fdesc}")
+
+    # 2. Extract Overview Aspect (if present)
     overview_text = (
         aspects.get(OVERVIEW_ASPECT_KEY, {}).get("data", {}).get("content", "")
     )
-    output.append(
-        f"=== Knowledge Catalog Entry: {entry_name} ===\n"
-        f"{overview_text or entry_dict.get('description', '')}\n"
-    )
-  return "\n".join(output)
+
+    # 3. Extract any looker-view / looker-explore aspect details
+    looker_aspect_dump = {}
+    for k, v in aspects.items():
+      if "looker" in k.lower():
+        looker_aspect_dump[k] = v.get("data", {})
+
+    entry_block = [
+        f"=== Native Looker Entry in Knowledge Catalog: {entry_name} ===",
+        f"Display Name: {entry_dict.get('entrySource', {}).get('displayName', '')}",
+        f"Description: {entry_dict.get('entrySource', {}).get('description', '')}",
+    ]
+    if fields_summary:
+      entry_block.append(
+          "LookML Dimensions & Measures (from native `schema` aspect):\n"
+          + "\n".join(fields_summary)
+      )
+    if looker_aspect_dump:
+      entry_block.append(
+          "Looker Aspect Metadata:\n" + json.dumps(looker_aspect_dump, indent=2)
+      )
+    if overview_text:
+      entry_block.append(f"Enriched Semantic Overview:\n{overview_text}")
+
+    output.append("\n".join(entry_block))
+
+  return "\n\n".join(output)
 
 
 def call_bigquery_conversational_analytics(
@@ -181,15 +228,15 @@ def call_bigquery_conversational_analytics(
 INSTRUCTION = """You are an Enterprise Data Analytics Agent powered by Dataplex Knowledge Catalog, Looker Semantic Layer (`sample_thelook_ecommerce`), and BigQuery Conversational Analytics (BQ CA).
 
 Follow this strict 2-step workflow for every analytical question:
-1. **Step 1 — Discover Looker Semantic Layer in Knowledge Catalog**:
-   Call `search_looker_knowledge_catalog` to retrieve the official LookML measure definitions, SQL formulas, and filter rules (e.g. `total_gmv`, `net_revenue`, `total_gross_margin`, `return_rate`).
+1. **Step 1 — Discover Native Looker Semantic Layer in Knowledge Catalog**:
+   Call `search_looker_knowledge_catalog` to retrieve the LookML views, explores, dimensions, and measure definitions automatically synced from Looker (under `@looker` / `system=looker`).
 2. **Step 2 — Execute Grounded Query in BigQuery Conversational Analytics**:
    Call `call_bigquery_conversational_analytics` passing:
    - `question`: The user's original question.
-   - `lookml_grounding_rules`: Paste the exact LookML measure definitions, SQL expressions, and required `WHERE` filters you discovered from Knowledge Catalog in Step 1.
+   - `lookml_grounding_rules`: Paste the exact LookML measure definitions, descriptions, SQL formulas, and required `WHERE` filters you discovered from Knowledge Catalog in Step 1.
 
 In your final answer:
-- Explain which Looker Semantic Layer definitions were retrieved from Knowledge Catalog.
+- Cite which native Looker View/Explore entry (`@looker`) from Knowledge Catalog grounded your calculation.
 - Present the governed SQL query generated by BigQuery CA and the final answer.
 """
 
