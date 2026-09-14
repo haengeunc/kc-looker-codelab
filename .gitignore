@@ -1,0 +1,14 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ADK & temp build files
+.adk/
+looker_governed_agent_tmp*/
+
+# Environment
+.env
