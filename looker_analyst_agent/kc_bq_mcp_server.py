@@ -98,16 +98,20 @@ def _get_access_token() -> str:
 
     # 4. Local Cloudtop / Cloud Shell fallback via gcloud CLI (only if gcloud is installed)
     if shutil.which("gcloud"):
-        res = subprocess.run(
-            ["gcloud", "auth", "print-access-token"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            _TOKEN_CACHE["token"] = res.stdout.strip()
-            _TOKEN_CACHE["expires_at"] = now + 3000
-            return _TOKEN_CACHE["token"]
+        try:
+            res = subprocess.run(
+                ["gcloud", "auth", "print-access-token"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                _TOKEN_CACHE["token"] = res.stdout.strip()
+                _TOKEN_CACHE["expires_at"] = now + 3000
+                return _TOKEN_CACHE["token"]
+        except Exception:
+            pass
 
     raise RuntimeError(
         "Unable to obtain Google Cloud access token. On Cloud Run / Agent Engine, ensure the service account has "
@@ -522,6 +526,138 @@ def check_lookml_in_knowledge_catalog(
                 "measures": [],
             },
         },
+    }
+
+
+@mcp.tool()
+def generate_data_chart(
+    chart_type: str,
+    title: str,
+    x_values: List[Any],
+    y_values: List[float],
+    x_label: str = "",
+    y_label: str = "",
+    color: str = "#1a73e8",
+) -> Dict[str, Any]:
+    """Generates an executive-ready statistical visualization chart as an inline base64 image (PNG).
+
+    Args:
+        chart_type: Type of chart: 'bar', 'horizontal_bar', 'line', 'pie'.
+        title: Clean title for the chart.
+        x_values: List of category labels or X-axis values (e.g. ['China', 'United States', 'United Kingdom']).
+        y_values: List of numerical metric values (e.g. [425000.0, 312000.0, 184000.0]).
+        x_label: Optional label for the X axis.
+        y_label: Optional label for the Y axis.
+        color: Primary accent hex color (default: '#1a73e8').
+
+    Returns:
+        Dictionary containing markdown_image (base64 Data URI string) to include directly in markdown,
+        summary statistics, and data points.
+    """
+    import base64
+    import io
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        return {"error": f"Matplotlib is not installed or failed to initialize: {e}"}
+
+    if not x_values or not y_values:
+        return {"error": "x_values and y_values must not be empty."}
+
+    if len(x_values) != len(y_values):
+        return {"error": f"Length mismatch: {len(x_values)} x_values vs {len(y_values)} y_values."}
+
+    y_clean = [float(v) if v is not None else 0.0 for v in y_values]
+    x_clean = [str(v) for v in x_values]
+
+    fig, ax = plt.subplots(figsize=(8.5, 4.5), dpi=140)
+    fig.patch.set_facecolor("#ffffff")
+    ax.set_facecolor("#fafafa")
+
+    chart_type_lower = chart_type.lower()
+    palette = ["#1a73e8", "#12b5cb", "#e37400", "#d93025", "#1e8e3e", "#9334e6", "#f29900", "#5f6368"]
+
+    if chart_type_lower in ("bar", "column"):
+        bars = ax.bar(x_clean, y_clean, color=color, width=0.55, edgecolor="none", zorder=3)
+        ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(
+                f"{height:,.0f}" if abs(height) >= 10 else f"{height:,.2f}",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 4),
+                textcoords="offset points",
+                ha="center", va="bottom", fontsize=8.5, fontweight="500", color="#202124"
+            )
+        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0, ha="right" if any(len(str(s)) > 8 for s in x_clean) else "center")
+    elif chart_type_lower in ("horizontal_bar", "hbar"):
+        y_pos = list(range(len(x_clean)))[::-1]
+        bars = ax.barh(y_pos, y_clean, color=color, height=0.55, zorder=3)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(x_clean)
+        ax.grid(axis="x", linestyle="--", alpha=0.35, zorder=0)
+        for bar in bars:
+            width = bar.get_width()
+            ax.annotate(
+                f"{width:,.0f}" if abs(width) >= 10 else f"{width:,.2f}",
+                xy=(width, bar.get_y() + bar.get_height() / 2),
+                xytext=(5, 0),
+                textcoords="offset points",
+                ha="left", va="center", fontsize=8.5, fontweight="500", color="#202124"
+            )
+    elif chart_type_lower == "line":
+        ax.plot(x_clean, y_clean, color=color, marker="o", linewidth=2.5, markersize=6, zorder=3)
+        ax.grid(linestyle="--", alpha=0.35, zorder=0)
+        for x, y in zip(x_clean, y_clean):
+            ax.annotate(
+                f"{y:,.0f}" if abs(y) >= 10 else f"{y:,.2f}",
+                xy=(x, y),
+                xytext=(0, 6),
+                textcoords="offset points",
+                ha="center", va="bottom", fontsize=8.5, fontweight="500"
+            )
+        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0)
+    elif chart_type_lower == "pie":
+        colors = palette[:len(x_clean)] if len(x_clean) <= len(palette) else None
+        wedges, texts, autotexts = ax.pie(
+            y_clean, labels=x_clean, autopct="%1.1f%%",
+            startangle=140, colors=colors, textprops=dict(color="#202124")
+        )
+        for at in autotexts:
+            at.set_color("#ffffff")
+            at.set_fontweight("bold")
+    else:
+        bars = ax.bar(x_clean, y_clean, color=color, width=0.55, zorder=3)
+        ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+
+    ax.set_title(title, fontsize=12.5, fontweight="bold", pad=14, color="#202124")
+    if x_label and chart_type_lower != "pie":
+        ax.set_xlabel(x_label, fontsize=9.5, labelpad=8, color="#5f6368")
+    if y_label and chart_type_lower != "pie":
+        ax.set_ylabel(y_label, fontsize=9.5, labelpad=8, color="#5f6368")
+
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    for spine in ["bottom", "left"]:
+        ax.spines[spine].set_color("#dadce0")
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    b64_data = base64.b64encode(buf.read()).decode("utf-8")
+    markdown_img = f"![{title}](data:image/png;base64,{b64_data})"
+
+    return {
+        "status": "success",
+        "chart_type": chart_type,
+        "title": title,
+        "markdown_image": markdown_img,
+        "data_points_count": len(x_clean),
     }
 
 

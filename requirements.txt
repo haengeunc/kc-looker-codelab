@@ -8,3 +8,4 @@ cloudpickle>=3.0.0
 requests>=2.32.0
 mcp>=2.2.0
 protobuf>=5.0.0
+matplotlib>=3.8.0

@@ -15,6 +15,7 @@ from looker_analyst_agent.kc_bq_mcp_server import (
     get_looker_view_metadata,
     check_lookml_in_knowledge_catalog,
     execute_bigquery_sql,
+    generate_data_chart,
 )
 from looker_analyst_agent.prompt import LOOKER_ANALYST_PROMPT
 
@@ -89,6 +90,7 @@ def build_agent_tools():
         get_looker_explore_metadata,
         get_looker_view_metadata,
         execute_bigquery_sql,
+        generate_data_chart,
     ]
 
     # 2. If USE_MCP_STDIO=1 is set, also attach the stdio MCPToolset server

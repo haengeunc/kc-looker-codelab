@@ -180,6 +180,17 @@ To guarantee reliability, `check_lookml_in_knowledge_catalog` implements a direc
         )
 ```
 
+### 4.3 Data Visualization & Charting Engine (`generate_data_chart` + Mermaid)
+To ensure business users receive high-fidelity visual charts in both the **ADK Web UI** and **Gemini Enterprise (Agentspace)** without relying on external image hosting, the agent implements a hybrid charting engine:
+1. **`generate_data_chart` Tool**:
+   - Generates executive-ready bar charts (`bar`, `horizontal_bar`), time-series line charts (`line`), and distribution charts (`pie`).
+   - Uses a headless Matplotlib backend (`Agg`) to render high-resolution PNGs encoded as inline **base64 Data URIs** (`![Title](data:image/png;base64,...)`).
+   - Renders directly in any web UI or chat client without external image storage or public bucket requirements.
+2. **Native Mermaid.js Diagrams**:
+   - The agent also outputs native Mermaid blocks (`xychart-beta` for bar/line charts and `pie` for distributions), which are dynamically rendered by the frontend markdown engine.
+3. **Unicode Visual Data Bars**:
+   - Summary tables automatically include inline visual bars (e.g. `████████░░ 80%`) alongside numerical metrics for instant visual comparison.
+
 ---
 
 ## 5. Step-by-Step Setup & Deployment
