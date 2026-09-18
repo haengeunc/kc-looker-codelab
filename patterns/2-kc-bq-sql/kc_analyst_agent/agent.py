@@ -1,4 +1,4 @@
-"""Vertex AI / ADK Analyst Agent connected to Knowledge Catalog MCP & BigQuery MCP Toolbox."""
+"""Vertex AI / ADK Analyst Agent connected to Knowledge Catalog MCP & BigQuery MCP Toolbox (3-Stage Sequential Pipeline)."""
 
 import os
 import shutil
@@ -18,7 +18,11 @@ from kc_analyst_agent.kc_bq_mcp_server import (
     execute_bigquery_sql,
     generate_data_chart,
 )
-from kc_analyst_agent.prompt import LOOKER_ANALYST_PROMPT
+from kc_analyst_agent.prompt import (
+    DISCOVERY_STAGE_PROMPT,
+    SQL_STAGE_PROMPT,
+    PRESENTATION_STAGE_PROMPT,
+)
 
 
 def _detect_default_project() -> str:
@@ -61,7 +65,6 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
             quota_project_id=quota_project_id,
             default_scopes=default_scopes,
         )
-        # Verify token validity
         if getattr(creds, "valid", False):
             return creds, proj or PROJECT_ID
     except Exception:
@@ -75,70 +78,61 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
 
 google.auth.default = _resilient_google_auth_default
 
-from google.adk.agents import LlmAgent
-from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, StdioServerParameters
+from google.adk.agents import LlmAgent, SequentialAgent
 
-MCP_SERVER_SCRIPT = str((Path(__file__).parent / "kc_bq_mcp_server.py").resolve())
-TOOLBOX_BINARY = shutil.which("toolbox") or os.path.expanduser("~/.local/bin/toolbox")
+DEFAULT_MODEL = os.environ.get("VERTEX_MODEL", "gemini-2.5-flash")
 
+# --- 3-Stage Deterministic Sequential Pipeline ---
 
-def build_agent_tools():
-    """Constructs the toolset combining Knowledge Catalog MCP and BigQuery MCP Toolbox."""
-    tools = [
-        # 1. Knowledge Catalog & BigQuery MCP Tools
+# Stage 1: Metadata & Governance Discovery
+metadata_discovery_agent = LlmAgent(
+    model=DEFAULT_MODEL,
+    name="metadata_discovery_agent",
+    description="Discovers certified Looker Explores, Views, Joins, and Measures from Knowledge Catalog and GCS policy docs.",
+    instruction=DISCOVERY_STAGE_PROMPT,
+    tools=[
         check_lookml_in_knowledge_catalog,
         search_knowledge_catalog,
         get_looker_explore_metadata,
         get_looker_view_metadata,
         read_gcs_policy_document,
+    ],
+)
+
+# Stage 2: Grounded BigQuery SQL Execution
+sql_execution_agent = LlmAgent(
+    model=DEFAULT_MODEL,
+    name="sql_execution_agent",
+    description="Compiles LookML measure formulas into standard BigQuery SQL grounded in Stage 1 metadata and executes it.",
+    instruction=SQL_STAGE_PROMPT,
+    tools=[
         execute_bigquery_sql,
+    ],
+)
+
+# Stage 3: Presentation, Visualizations & Governance Attribution
+presentation_agent = LlmAgent(
+    model=DEFAULT_MODEL,
+    name="presentation_agent",
+    description="Formats executive answers, renders data charts (Matplotlib PNG + Mermaid), and attributes Looker governance.",
+    instruction=PRESENTATION_STAGE_PROMPT,
+    tools=[
         generate_data_chart,
-    ]
+    ],
+)
 
-    # 2. If USE_MCP_STDIO=1 is set, also attach the stdio MCPToolset server
-    if os.environ.get("USE_MCP_STDIO", "0") == "1":
-        tools.append(
-            MCPToolset(
-                connection_params=StdioServerParameters(
-                    command=sys.executable,
-                    args=[MCP_SERVER_SCRIPT],
-                    env={
-                        "GOOGLE_CLOUD_PROJECT": PROJECT_ID,
-                        "DATAPLEX_LOCATION": os.environ.get("DATAPLEX_LOCATION", "us-central1"),
-                        "PATH": os.environ.get("PATH", ""),
-                    },
-                )
-            )
-        )
-
-    # 3. If USE_BINARY_TOOLBOX=1 is set, attach the GenAI Toolbox binary (--prebuilt dataplex & bigquery)
-    if os.environ.get("USE_BINARY_TOOLBOX", "0") == "1" and os.path.exists(TOOLBOX_BINARY):
-        tools.append(
-            MCPToolset(
-                connection_params=StdioServerParameters(
-                    command=TOOLBOX_BINARY,
-                    args=["--prebuilt", "dataplex", "--prebuilt", "bigquery", "--stdio"],
-                    env={
-                        "BIGQUERY_PROJECT": PROJECT_ID,
-                        "DATAPLEX_PROJECT": PROJECT_ID,
-                        "GOOGLE_CLOUD_PROJECT": PROJECT_ID,
-                        "PATH": os.environ.get("PATH", ""),
-                    },
-                )
-            )
-        )
-
-    return tools
-
-
-root_agent = LlmAgent(
-    model=os.environ.get("VERTEX_MODEL", "gemini-2.5-pro"),
+# Root Sequential Pipeline
+root_agent = SequentialAgent(
     name="kc_analyst_agent",
     description=(
-        "Enterprise Data Analyst Agent powered by Vertex AI that connects to "
-        "Knowledge Catalog (Dataplex) MCP for Looker semantic metadata (Views, Explores, Joins, Measures) "
-        "and BigQuery MCP Toolbox for SQL execution."
+        "Enterprise 3-Stage Sequential Data Analyst Agent powered by Vertex AI. "
+        "Stage 1: Discovers certified Looker metadata from Knowledge Catalog MCP. "
+        "Stage 2: Compiles and executes grounded BigQuery SQL. "
+        "Stage 3: Generates visual charts and executive attribution."
     ),
-    instruction=LOOKER_ANALYST_PROMPT,
-    tools=build_agent_tools(),
+    sub_agents=[
+        metadata_discovery_agent,
+        sql_execution_agent,
+        presentation_agent,
+    ],
 )

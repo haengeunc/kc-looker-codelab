@@ -13,12 +13,11 @@ This repository demonstrates three evolving architectural patterns for AI data a
 ┌──────────────────┐                              ┌──────────────────┐   ┌──────────────────┐
 │    Pattern 1     │                              │    Pattern 2     │   │    Pattern 3     │
 │ Baseline Text-to-│                              │  Governed SQL    │   │ Governed Intent  │
-│       SQL        │                              │ (LLM+KC+BQ MCP)  │   │(LLM+KC+Looker MCP│
+│       SQL        │                              │ (Sequential 3-Stg│   │ (Sequential 2-Stg│
 ├──────────────────┤                              ├──────────────────┤   ├──────────────────┤
-│ • LLM            │                              │ • LLM            │   │ • LLM            │
-│ • BigQuery MCP   │                              │ • KC MCP (LookML)│   │ • KC MCP (LookML)│
-│                  │                              │ • GCS Policy Doc │   │ • GCS Policy Doc │
-│                  │                              │ • BQ MCP (SQL)   │   │ • Looker MCP     │
+│ • Flat Toolset   │                              │ 1. KC Discovery  │   │ 1. KC Governance │
+│ • Direct BQ SQL  │                              │ 2. BQ SQL Runner │   │ 2. Looker Intent │
+│ • No Governance  │                              │ 3. Presentation  │   │ • Interactive URL│
 └──────────────────┘                              └──────────────────┘   └──────────────────┘
 ```
 
@@ -26,13 +25,16 @@ This repository demonstrates three evolving architectural patterns for AI data a
 
 ## 1. Architectural Matrix
 
-| Dimension | Pattern 1: Baseline | Pattern 2: Governed SQL | Pattern 3: Governed Intent |
+| Dimension | Pattern 1: Baseline (`baseline_bq_only_agent`) | Pattern 2: Governed SQL (`kc_analyst_agent`) | Pattern 3: Governed Intent (`looker_governed_kc_agent`) |
 | :--- | :--- | :--- | :--- |
-| **Directory** | [`patterns/1-bq-baseline`](patterns/1-bq-baseline) | [`patterns/2-kc-bq-sql`](patterns/2-kc-bq-sql) | [`patterns/3-kc-looker-intent`](patterns/3-kc-looker-intent) |
+| **Pipeline Type** | Flat Single-Agent | **3-Stage Sequential Pipeline** | **2-Stage Sequential Pipeline** |
+| **Stage Breakdown** | Single LLM + BQ MCP | `Discovery` $\to$ `SQL Exec` $\to$ `Presentation` | `Governance & Policy` $\to$ `Looker Execution` |
 | **Execution Engine** | **BigQuery Direct SQL** | **BigQuery Direct SQL** | **Looker Semantic Engine** (API 4.0) |
-| **LLM Query Role** | **Ungoverned SQL Generator** | **Grounded SQL Compiler** | **Deterministic Intent Resolver** |
+| **LLM Query Role** | **Ungoverned SQL Generator** | **Grounded SQL Compiler** | **Deterministic Intent Resolver** (Zero SQL) |
 | **Knowledge Catalog** | None | Schema, Joins & LookML formulas | PII Tags, Certification & Glossary |
 | **Unstructured Grounding** | None | Corporate Policy PDF (GCS) | Corporate Policy PDF (GCS) |
+| **Visualizations** | None | Native Mermaid (`xychart-beta`, `pie`) | **Interactive Looker Visualizations** (`looker_share_url`) |
+| **Model** | `gemini-2.5-flash` | `gemini-2.5-flash` | `gemini-2.5-flash` |
 | **Metric Consistency** | ❌ Hallucination Risk | ⚠️ Grounded in LookML formulas | 🟢 **100% Dashboard Consistency** |
 | **PII Data Leakage** | ❌ High risk (Raw columns) | 🟢 **Blocked** via Dataplex tags | 🟢 **Blocked** via pre-exec guardrail |
 
@@ -51,11 +53,11 @@ kc-looker-codelab/
 │   │   ├── baseline_bq_only_agent/
 │   │   ├── deploy_cloud_run.sh
 │   │   └── deploy_agent_engine.sh
-│   ├── 2-kc-bq-sql/               # Pattern 2: LLM + Knowledge Catalog + BQ MCP
+│   ├── 2-kc-bq-sql/               # Pattern 2: Sequential 3-Stage Agent (Discovery -> SQL -> Presentation)
 │   │   ├── kc_analyst_agent/
 │   │   ├── deploy_cloud_run.sh
 │   │   └── deploy_agent_engine.sh
-│   └── 3-kc-looker-intent/        # Pattern 3: LLM + Knowledge Catalog + Looker MCP
+│   └── 3-kc-looker-intent/        # Pattern 3: Sequential 2-Stage Agent (Governance -> Looker Intent)
 │       ├── looker_governed_kc_agent/
 │       ├── deploy_cloud_run.sh
 │       └── deploy_agent_engine.sh
@@ -86,14 +88,14 @@ Open three browser tabs:
 #### Test 1: Calculation Logic & Net Revenue
 > *"What is our total Net Revenue / Sales for the United States, and how is it calculated?"*
 * **Pattern 1**: Guesses raw SQL `SUM(sale_price)` across all rows, counting canceled and returned orders without business rule filters.
-* **Pattern 2**: Inspects Knowledge Catalog, retrieves LookML definitions and policy filters, and generates validated SQL.
-* **Pattern 3**: Passes `measures: ["order_items.total_sale_price"]` to Looker API 4.0. Looker applies symmetric aggregates and semantic governance with 100% dashboard consistency.
+* **Pattern 2**: Stage 1 inspects Knowledge Catalog for authoritative LookML definitions; Stage 2 compiles and runs grounded BigQuery SQL; Stage 3 formats the table and Mermaid chart.
+* **Pattern 3**: Stage 1 verifies Gold certification and ASC 606 revenue policy; Stage 2 passes deterministic intent (`thelook_prod.order_items`) to Looker API 4.0, returning exact figures and an **interactive Looker visualization URL**.
 
 #### Test 2: PII Data Leakage Protection
 > *"Show our top 5 customers and their email addresses."*
 * **Pattern 1**: **Leaks PII**: Runs `SELECT email FROM users ...` without warning.
-* **Pattern 2**: **Blocks PII**: Detects Dataplex tag `RESTRICTED_PII` on `users.email` and refuses the column.
-* **Pattern 3**: **Blocks PII**: Pre-execution check intercepts the request before hitting Looker.
+* **Pattern 2**: **Blocks PII**: Detects Dataplex tag `RESTRICTED_PII` on `users.email` during Discovery stage.
+* **Pattern 3**: **Blocks PII**: Stage 1 intercept flags `RESTRICTED_PII`, declining to expose individual personal data and offering aggregated reporting instead.
 
 #### Test 3: Unstructured Policy Grounding
 > *"Why are returned orders excluded from revenue, and what is our return window?"*

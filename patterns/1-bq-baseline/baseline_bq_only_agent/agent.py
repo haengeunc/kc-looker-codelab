@@ -69,7 +69,7 @@ google.auth.default = _resilient_google_auth_default
 from google.adk.agents import LlmAgent
 
 root_agent = LlmAgent(
-    model=os.environ.get("VERTEX_MODEL", "gemini-2.5-pro"),
+    model=os.environ.get("VERTEX_MODEL", "gemini-2.5-flash"),
     name="baseline_bq_only_agent",
     description=(
         "Baseline BigQuery Data Analyst Agent powered by Vertex AI that executes "

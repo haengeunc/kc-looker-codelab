@@ -1,4 +1,4 @@
-"""Vertex AI / ADK Governed Looker & Knowledge Catalog Analyst Agent."""
+"""Vertex AI / ADK Governed Looker & Knowledge Catalog Analyst Agent (2-Stage Sequential Pipeline)."""
 
 import os
 import subprocess
@@ -15,7 +15,10 @@ from looker_governed_kc_agent.kc_looker_mcp_server import (
     read_gcs_policy_document,
     generate_data_chart,
 )
-from looker_governed_kc_agent.prompt import LOOKER_GOVERNED_PROMPT
+from looker_governed_kc_agent.prompt import (
+    GOVERNANCE_STAGE_PROMPT,
+    LOOKER_STAGE_PROMPT,
+)
 
 
 def _detect_default_project() -> str:
@@ -68,32 +71,47 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
 
 google.auth.default = _resilient_google_auth_default
 
-from google.adk.agents import LlmAgent
+from google.adk.agents import LlmAgent, SequentialAgent
 
+DEFAULT_MODEL = os.environ.get("VERTEX_MODEL", "gemini-2.5-flash")
 
-def build_agent_tools():
-    """Builds the toolset combining Looker Semantic Engine, Knowledge Catalog Governance, and GCS Docs."""
-    return [
-        # 1. Looker Semantic Query (Text-to-Intent)
+# --- 2-Stage Deterministic Governed Pipeline ---
+
+# Stage 1: Governance, PII Guardrails & Unstructured Grounding
+governance_policy_agent = LlmAgent(
+    model=DEFAULT_MODEL,
+    name="governance_policy_agent",
+    description="Enforces Knowledge Catalog governance (PII guardrails, Gold certification) and reads GCS corporate policies.",
+    instruction=GOVERNANCE_STAGE_PROMPT,
+    tools=[
+        kc_check_governance,
+        read_gcs_policy_document,
+    ],
+)
+
+# Stage 2: Looker Semantic Query & Native Visualization
+looker_execution_agent = LlmAgent(
+    model=DEFAULT_MODEL,
+    name="looker_execution_agent",
+    description="Executes deterministic semantic queries via Looker MCP (Text-to-Intent) and provides interactive Looker visualization links.",
+    instruction=LOOKER_STAGE_PROMPT,
+    tools=[
         looker_query,
         looker_get_fields,
-        # 2. Knowledge Catalog Governance (Certification & PII Guardrails)
-        kc_check_governance,
-        # 3. Unstructured Grounding (GCS Corporate Policy PDFs)
-        read_gcs_policy_document,
-        # 4. Data Visualization Engine (Base64 PNGs)
         generate_data_chart,
-    ]
+    ],
+)
 
-
-root_agent = LlmAgent(
-    model=os.environ.get("VERTEX_MODEL", "gemini-2.5-pro"),
+# Root Sequential Pipeline
+root_agent = SequentialAgent(
     name="looker_governed_kc_agent",
     description=(
-        "Enterprise Governed Data Analyst Agent that uses Looker as a deterministic semantic engine "
-        "(Text-to-Intent without LLM SQL generation), combined with Knowledge Catalog governance "
-        "(PII protection & Gold Certification) and GCS unstructured policy documents."
+        "Enterprise 2-Stage Governed Data Analyst Agent powered by Vertex AI, Knowledge Catalog, and Looker. "
+        "Stage 1: Enforces data governance, PII guardrails, and corporate policy grounding. "
+        "Stage 2: Executes deterministic Looker semantic queries with native interactive visualizations."
     ),
-    instruction=LOOKER_GOVERNED_PROMPT,
-    tools=build_agent_tools(),
+    sub_agents=[
+        governance_policy_agent,
+        looker_execution_agent,
+    ],
 )

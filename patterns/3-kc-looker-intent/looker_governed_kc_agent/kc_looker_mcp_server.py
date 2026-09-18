@@ -284,7 +284,7 @@ def looker_get_fields(
     """
     token = _get_looker_token()
     url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/lookml_models/{model}/explores/{explore}"
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"token {token}"}
 
     resp = requests.get(url, headers=headers, timeout=20)
     if resp.status_code != 200:
