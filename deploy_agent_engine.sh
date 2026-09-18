@@ -53,4 +53,4 @@ fi
   --region="$REGION" \
   --display_name="$DISPLAY_NAME" \
   --description="Enterprise Data Analyst Agent grounded in Looker semantic metadata from Knowledge Catalog (Dataplex) and BigQuery." \
-  "${SCRIPT_DIR}/looker_analyst_agent"
+  "${SCRIPT_DIR}/kc_analyst_agent"

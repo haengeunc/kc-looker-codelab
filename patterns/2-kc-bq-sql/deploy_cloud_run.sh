@@ -6,10 +6,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
-SERVICE_NAME="${SERVICE_NAME:-looker-analyst-agent}"
+SERVICE_NAME="${SERVICE_NAME:-kc-analyst-agent}"
 
 echo "================================================================"
-echo " Deploying Looker Analyst Agent to Cloud Run"
+echo " Deploying KC Analyst Agent to Cloud Run"
 echo " Project:      $PROJECT_ID"
 echo " Region:       $REGION"
 echo " Service Name: $SERVICE_NAME"
@@ -53,5 +53,5 @@ echo "Deploying via adk deploy cloud_run (with Web UI and A2A protocol enabled).
   --env GOOGLE_GENAI_USE_VERTEXAI=1 \
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
-  "${SCRIPT_DIR}/looker_analyst_agent" \
+  "${SCRIPT_DIR}/kc_analyst_agent" \
   -- --allow-unauthenticated

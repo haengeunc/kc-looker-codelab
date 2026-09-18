@@ -9,7 +9,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from looker_analyst_agent.agent import PROJECT_ID, root_agent
+from kc_analyst_agent.agent import PROJECT_ID, root_agent
 
 # Ensure Vertex AI configuration
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "1")

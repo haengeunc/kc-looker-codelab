@@ -43,4 +43,4 @@ fi
   --region="$REGION" \
   --display_name="$DISPLAY_NAME" \
   --description="Governed Data Analyst Agent that uses Looker as a deterministic semantic layer (Text-to-Intent) and Knowledge Catalog for PII & policy governance." \
-  "${SCRIPT_DIR}/looker_governed_agent"
+  "${SCRIPT_DIR}/looker_governed_kc_agent"

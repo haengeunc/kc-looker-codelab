@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploys looker_analyst_agent to Vertex AI Agent Engine using active gcloud credentials."""
+"""Deploys kc_analyst_agent to Vertex AI Agent Engine using active gcloud credentials."""
 
 import os
 from pathlib import Path
@@ -32,7 +32,7 @@ def _detect_default_project() -> str:
 
 PROJECT_ID = _detect_default_project()
 REGION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-AGENT_DIR = str((Path(__file__).parent / "looker_analyst_agent").resolve())
+AGENT_DIR = str((Path(__file__).parent / "kc_analyst_agent").resolve())
 
 # 1. Obtain valid access token from gcloud CLI
 res = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, check=True)

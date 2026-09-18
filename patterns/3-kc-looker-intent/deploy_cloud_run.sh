@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
-SERVICE_NAME="${SERVICE_NAME:-looker-governed-agent}"
+SERVICE_NAME="${SERVICE_NAME:-looker-governed-kc-agent}"
 
 echo "================================================================"
 echo " Deploying Governed Looker & KC Agent to Cloud Run"
@@ -52,5 +52,5 @@ echo "Deploying via adk deploy cloud_run (with Web UI enabled)..."
   --env LOOKER_CLIENT_ID="${LOOKER_CLIENT_ID:-B3T44CSKfBXQ7dCWQhjP}" \
   --env LOOKER_CLIENT_SECRET="${LOOKER_CLIENT_SECRET:-BpjRy4nq6Q6cJnysjF6SQfm7}" \
   --env LOOKER_MODEL_NAME="${LOOKER_MODEL_NAME:-thelook_prod}" \
-  "${SCRIPT_DIR}/looker_governed_agent" \
+  "${SCRIPT_DIR}/looker_governed_kc_agent" \
   -- --allow-unauthenticated

@@ -1,24 +1,23 @@
-"""Vertex AI / ADK Governed Looker & Knowledge Catalog Analyst Agent."""
+"""Vertex AI / ADK Baseline BigQuery Analyst Agent (LLM + BigQuery MCP only)."""
 
 import os
 import subprocess
-import sys
-from pathlib import Path
 import google.auth
 from google.oauth2.credentials import Credentials
 
-from looker_governed_agent.kc_looker_mcp_server import (
-    _get_gcp_token,
-    looker_query,
-    looker_get_fields,
-    kc_check_governance,
-    read_gcs_policy_document,
+from baseline_bq_only_agent.bq_mcp_server import (
+    _get_access_token,
+    list_datasets,
+    list_tables,
+    get_table_schema,
+    execute_bigquery_sql,
     generate_data_chart,
 )
-from looker_governed_agent.prompt import LOOKER_GOVERNED_PROMPT
+from baseline_bq_only_agent.prompt import BASELINE_ANALYST_PROMPT
 
 
 def _detect_default_project() -> str:
+    """Detects GCP project from env, gcloud config, or defaults to YOUR-GCP-PROJECT."""
     for env_var in ("GOOGLE_CLOUD_PROJECT", "GCP_PROJECT", "DEVSHELL_PROJECT_ID"):
         val = os.environ.get(env_var)
         if val:
@@ -41,7 +40,6 @@ os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "1")
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
-# Resilient Google Auth bridge for Vertex AI & GCS
 if not hasattr(google.auth, "_orig_default"):
     google.auth._orig_default = google.auth.default
 _orig_google_auth_default = google.auth._orig_default
@@ -59,41 +57,30 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
             return creds, proj or PROJECT_ID
     except Exception:
         pass
-    token = _get_gcp_token()
-    if token:
-        creds = Credentials(token=token, quota_project_id=quota_project_id or PROJECT_ID)
-        return creds, PROJECT_ID
-    return _orig_google_auth_default(scopes=scopes, request=request, quota_project_id=quota_project_id, default_scopes=default_scopes)
+    creds = Credentials(
+        token=_get_access_token(),
+        quota_project_id=quota_project_id or PROJECT_ID,
+    )
+    return creds, PROJECT_ID
 
 
 google.auth.default = _resilient_google_auth_default
 
 from google.adk.agents import LlmAgent
 
-
-def build_agent_tools():
-    """Builds the toolset combining Looker Semantic Engine, Knowledge Catalog Governance, and GCS Docs."""
-    return [
-        # 1. Looker Semantic Query (Text-to-Intent)
-        looker_query,
-        looker_get_fields,
-        # 2. Knowledge Catalog Governance (Certification & PII Guardrails)
-        kc_check_governance,
-        # 3. Unstructured Grounding (GCS Corporate Policy PDFs)
-        read_gcs_policy_document,
-        # 4. Data Visualization Engine (Base64 PNGs)
-        generate_data_chart,
-    ]
-
-
 root_agent = LlmAgent(
     model=os.environ.get("VERTEX_MODEL", "gemini-2.5-pro"),
-    name="looker_governed_intent_agent",
+    name="baseline_bq_only_agent",
     description=(
-        "Enterprise Governed Data Analyst Agent that uses Looker as a deterministic semantic engine "
-        "(Text-to-Intent without LLM SQL generation), combined with Knowledge Catalog governance "
-        "(PII protection & Gold Certification) and GCS unstructured policy documents."
+        "Baseline BigQuery Data Analyst Agent powered by Vertex AI that executes "
+        "raw SQL queries directly against BigQuery without Knowledge Catalog or Looker semantic governance."
     ),
-    instruction=LOOKER_GOVERNED_PROMPT,
-    tools=build_agent_tools(),
+    instruction=BASELINE_ANALYST_PROMPT,
+    tools=[
+        list_datasets,
+        list_tables,
+        get_table_schema,
+        execute_bigquery_sql,
+        generate_data_chart,
+    ],
 )

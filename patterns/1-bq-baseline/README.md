@@ -34,10 +34,10 @@ This application demonstrates a standard, un-governed generative AI analyst that
 source ../demo-kc-bq/.venv/bin/activate
 
 # 2. Run ADK Web UI
-adk web --port 8082 baseline_analyst_agent
+adk web --port 8080 baseline_bq_only_agent
 ```
 
-Visit `http://localhost:8082/dev-ui/?app=baseline_analyst_agent`.
+Visit `http://localhost:8080/dev-ui/?app=baseline_bq_only_agent`.
 
 ---
 

@@ -10,10 +10,10 @@ RUN curl -fsSL https://storage.googleapis.com/genai-toolbox/v1.10.0/linux/amd64/
     && chmod +x /usr/local/bin/toolbox
 
 # Copy agent package and requirements
-COPY looker_analyst_agent/requirements.txt /app/requirements.txt
+COPY kc_analyst_agent/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY looker_analyst_agent /app/looker_analyst_agent
+COPY kc_analyst_agent /app/kc_analyst_agent
 
 # Cloud Run defaults (override GOOGLE_CLOUD_PROJECT at deploy time)
 ENV GOOGLE_GENAI_USE_VERTEXAI=1

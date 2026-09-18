@@ -9,7 +9,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from looker_governed_agent.agent import PROJECT_ID, root_agent
+from looker_governed_kc_agent.agent import PROJECT_ID, root_agent
 
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "1")
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", PROJECT_ID)

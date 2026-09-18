@@ -4,10 +4,10 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 
-COPY looker_governed_agent/requirements.txt /app/requirements.txt
+COPY looker_governed_kc_agent/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY looker_governed_agent /app/looker_governed_agent
+COPY looker_governed_kc_agent /app/looker_governed_kc_agent
 COPY sample_policies /app/sample_policies
 
 # Runtime Environment Variables (override at deploy time)

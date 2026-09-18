@@ -19,7 +19,7 @@ This application demonstrates the architectural contrast between two paradigms f
 
 ```mermaid
 flowchart TD
-    User(["Business User\n(Question: 'What is our Net Revenue by Country, and what is our refund policy?')"]) --> Agent["Vertex AI ADK Agent\n(looker_governed_intent_agent)"]
+    User(["Business User\n(Question: 'What is our Net Revenue by Country, and what is our refund policy?')"]) --> Agent["Vertex AI ADK Agent\n(looker_governed_kc_agent)"]
 
     subgraph Governance ["1. Knowledge Catalog Governance & Grounding"]
         Agent -->|"Inspect PII & Certification"| KC["Dataplex Knowledge Catalog\n(PII Tags, Gold Tiers, Glossary)"]
@@ -42,7 +42,7 @@ flowchart TD
 
 ```text
 .
-├── looker_governed_agent/
+├── looker_governed_kc_agent/
 │   ├── __init__.py                  # Exports root_agent for ADK CLI & Agent Engine
 │   ├── agent.py                     # LlmAgent definition, tools & resilient auth bridge
 │   ├── prompt.py                    # Governed Text-to-Intent prompt & PII guardrails
@@ -107,7 +107,7 @@ python3 run_demo_query.py "List the top 5 customers with their emails and total 
 # 4. Launch the ADK Web UI
 adk web --port 8000
 ```
-Open `http://localhost:8000` in your browser and select `looker_governed_intent_agent`.
+Open `http://localhost:8082` in your browser and select `looker_governed_kc_agent`.
 
 ---
 

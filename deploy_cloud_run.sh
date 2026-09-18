@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
-SERVICE_NAME="${SERVICE_NAME:-looker-analyst-agent}"
+SERVICE_NAME="${SERVICE_NAME:-kc-analyst-agent}"
 
 if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
   echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
@@ -15,7 +15,7 @@ if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
 fi
 
 echo "================================================================"
-echo " Deploying Looker Analyst Agent to Cloud Run"
+echo " Deploying KC Analyst Agent to Cloud Run"
 echo " Project:      $PROJECT_ID"
 echo " Region:       $REGION"
 echo " Service Name: $SERVICE_NAME"
@@ -57,5 +57,5 @@ echo "Deploying via adk deploy cloud_run (with Web UI and A2A protocol enabled).
   --env GOOGLE_GENAI_USE_VERTEXAI=1 \
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
-  "${SCRIPT_DIR}/looker_analyst_agent" \
+  "${SCRIPT_DIR}/kc_analyst_agent" \
   -- --allow-unauthenticated

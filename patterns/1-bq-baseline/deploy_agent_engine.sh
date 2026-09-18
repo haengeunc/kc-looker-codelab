@@ -27,4 +27,4 @@ fi
   --region="$REGION" \
   --display_name="$DISPLAY_NAME" \
   --description="Baseline BigQuery Analyst Agent (LLM + BigQuery MCP only)" \
-  "${SCRIPT_DIR}/baseline_analyst_agent"
+  "${SCRIPT_DIR}/baseline_bq_only_agent"

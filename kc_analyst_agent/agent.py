@@ -8,7 +8,7 @@ from pathlib import Path
 import google.auth
 from google.oauth2.credentials import Credentials
 
-from looker_analyst_agent.kc_bq_mcp_server import (
+from kc_analyst_agent.kc_bq_mcp_server import (
     _get_access_token,
     search_knowledge_catalog,
     get_looker_explore_metadata,
@@ -17,7 +17,7 @@ from looker_analyst_agent.kc_bq_mcp_server import (
     execute_bigquery_sql,
     generate_data_chart,
 )
-from looker_analyst_agent.prompt import LOOKER_ANALYST_PROMPT
+from kc_analyst_agent.prompt import LOOKER_ANALYST_PROMPT
 
 
 def _detect_default_project() -> str:
@@ -131,7 +131,7 @@ def build_agent_tools():
 
 root_agent = LlmAgent(
     model=os.environ.get("VERTEX_MODEL", "gemini-2.5-pro"),
-    name="looker_knowledge_catalog_analyst_agent",
+    name="kc_analyst_agent",
     description=(
         "Enterprise Data Analyst Agent powered by Vertex AI that connects to "
         "Knowledge Catalog (Dataplex) MCP for Looker semantic metadata (Views, Explores, Joins, Measures) "

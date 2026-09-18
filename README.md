@@ -48,15 +48,15 @@ kc-looker-codelab/
 │   └── Corporate_Revenue_and_Refund_Policy.pdf
 ├── patterns/
 │   ├── 1-bq-baseline/             # Pattern 1: LLM + BigQuery MCP only
-│   │   ├── baseline_analyst_agent/
+│   │   ├── baseline_bq_only_agent/
 │   │   ├── deploy_cloud_run.sh
 │   │   └── deploy_agent_engine.sh
 │   ├── 2-kc-bq-sql/               # Pattern 2: LLM + Knowledge Catalog + BQ MCP
-│   │   ├── looker_analyst_agent/
+│   │   ├── kc_analyst_agent/
 │   │   ├── deploy_cloud_run.sh
 │   │   └── deploy_agent_engine.sh
 │   └── 3-kc-looker-intent/        # Pattern 3: LLM + Knowledge Catalog + Looker MCP
-│       ├── looker_governed_agent/
+│       ├── looker_governed_kc_agent/
 │       ├── deploy_cloud_run.sh
 │       └── deploy_agent_engine.sh
 └── requirements.txt               # Unified dependencies
@@ -77,9 +77,9 @@ pip install -r requirements.txt
 ```
 
 Open three browser tabs:
-* **Tab 1 (Pattern 1)**: `http://localhost:8080/dev-ui/?app=baseline_analyst_agent`
-* **Tab 2 (Pattern 2)**: `http://localhost:8081/dev-ui/?app=looker_analyst_agent`
-* **Tab 3 (Pattern 3)**: `http://localhost:8082/dev-ui/?app=looker_governed_agent`
+* **Tab 1 (Pattern 1 - Baseline)**: `http://localhost:8080/dev-ui/?app=baseline_bq_only_agent`
+* **Tab 2 (Pattern 2 - Governed SQL)**: `http://localhost:8081/dev-ui/?app=kc_analyst_agent`
+* **Tab 3 (Pattern 3 - Governed Intent)**: `http://localhost:8082/dev-ui/?app=looker_governed_kc_agent`
 
 ### Ask the Same 3 Questions to All Tabs:
 

@@ -47,5 +47,5 @@ echo "Deploying via adk deploy cloud_run (with Web UI and A2A protocol enabled).
   --env GOOGLE_GENAI_USE_VERTEXAI=1 \
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
-  "${SCRIPT_DIR}/baseline_analyst_agent" \
+  "${SCRIPT_DIR}/baseline_bq_only_agent" \
   -- --allow-unauthenticated
