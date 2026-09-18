@@ -539,7 +539,10 @@ def check_lookml_in_knowledge_catalog(
     }
 
 
-DEFAULT_POLICY_GCS_URI = "gs://looker-core-export-haengeun-429200/policies/Corporate_Revenue_and_Refund_Policy.pdf"
+DEFAULT_POLICY_GCS_URI = os.environ.get(
+    "POLICY_GCS_URI",
+    "gs://opm-looker-demo-policies-234424439374/policies/Corporate_Revenue_and_Refund_Policy.pdf"
+)
 LOCAL_POLICY_PDF = os.path.join(os.path.dirname(__file__), "../../sample_policies/Corporate_Revenue_and_Refund_Policy.pdf")
 
 

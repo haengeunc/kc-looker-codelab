@@ -84,10 +84,10 @@ Open three browser tabs:
 ### Ask the Same 3 Questions to All Tabs:
 
 #### Test 1: Calculation Logic & Net Revenue
-> *"What is our total Net Revenue for the United States, and how is it calculated?"*
-* **Pattern 1**: Guesses `SUM(sale_price)` across all rows, counting canceled and returned orders.
-* **Pattern 2**: Inspects Knowledge Catalog, retrieves the formula `SUM(CASE WHEN status = 'Complete' THEN sale_price ELSE 0 END)`, and writes the correct SQL.
-* **Pattern 3**: Passes `measures: ["order_items.net_revenue"]` to Looker. Looker applies symmetric aggregates with 100% dashboard consistency.
+> *"What is our total Net Revenue / Sales for the United States, and how is it calculated?"*
+* **Pattern 1**: Guesses raw SQL `SUM(sale_price)` across all rows, counting canceled and returned orders without business rule filters.
+* **Pattern 2**: Inspects Knowledge Catalog, retrieves LookML definitions and policy filters, and generates validated SQL.
+* **Pattern 3**: Passes `measures: ["order_items.total_sale_price"]` to Looker API 4.0. Looker applies symmetric aggregates and semantic governance with 100% dashboard consistency.
 
 #### Test 2: PII Data Leakage Protection
 > *"Show our top 5 customers and their email addresses."*

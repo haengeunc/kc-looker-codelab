@@ -4,15 +4,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-looker-governed-agent}"
-
-if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
-  echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
-  echo "Run: export GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT"
-  exit 1
-fi
 
 echo "================================================================"
 echo " Deploying Governed Looker & KC Agent to Cloud Run"
@@ -38,8 +32,8 @@ for ROLE in \
 done
 
 ADK_BIN="adk"
-if [[ -x "${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk" ]]; then
-  ADK_BIN="${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk"
+if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
 elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
@@ -50,12 +44,13 @@ echo "Deploying via adk deploy cloud_run (with Web UI enabled)..."
   --region="$REGION" \
   --service_name="$SERVICE_NAME" \
   --with_ui \
+  --a2a \
   --env GOOGLE_GENAI_USE_VERTEXAI=1 \
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
-  --env LOOKER_BASE_URL="${LOOKER_BASE_URL:-https://looker.haengeun.org}" \
-  --env LOOKER_CLIENT_ID="${LOOKER_CLIENT_ID:-W75CGNHQKTFnWFyVBDgG}" \
-  --env LOOKER_CLIENT_SECRET="${LOOKER_CLIENT_SECRET:-JssYFsm6rVsvGpJxKBFJ238W}" \
-  --env LOOKER_MODEL_NAME="${LOOKER_MODEL_NAME:-thelook_ecommerce_haengeun_us}" \
+  --env LOOKER_BASE_URL="${LOOKER_BASE_URL:-https://looker.cloud-bi-opm.com}" \
+  --env LOOKER_CLIENT_ID="${LOOKER_CLIENT_ID:-B3T44CSKfBXQ7dCWQhjP}" \
+  --env LOOKER_CLIENT_SECRET="${LOOKER_CLIENT_SECRET:-BpjRy4nq6Q6cJnysjF6SQfm7}" \
+  --env LOOKER_MODEL_NAME="${LOOKER_MODEL_NAME:-thelook_prod}" \
   "${SCRIPT_DIR}/looker_governed_agent" \
   -- --allow-unauthenticated

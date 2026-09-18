@@ -49,22 +49,22 @@ def _detect_default_project() -> str:
             return out
     except Exception:
         pass
-    return "YOUR-GCP-PROJECT"
+    return "opm-looker-core-demo-instance"
 
 
 PROJECT_ID = _detect_default_project()
 DEFAULT_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
-# Looker API Configuration
-LOOKER_BASE_URL = os.environ.get("LOOKER_BASE_URL", "https://looker.haengeun.org")
-LOOKER_CLIENT_ID = os.environ.get("LOOKER_CLIENT_ID", "W75CGNHQKTFnWFyVBDgG")
-LOOKER_CLIENT_SECRET = os.environ.get("LOOKER_CLIENT_SECRET", "JssYFsm6rVsvGpJxKBFJ238W")
-LOOKER_MODEL_NAME = os.environ.get("LOOKER_MODEL_NAME", "thelook_ecommerce_haengeun_us")
+# Looker API Configuration (Google Cloud BI OPM Instance)
+LOOKER_BASE_URL = os.environ.get("LOOKER_BASE_URL", "https://looker.cloud-bi-opm.com")
+LOOKER_CLIENT_ID = os.environ.get("LOOKER_CLIENT_ID", "B3T44CSKfBXQ7dCWQhjP")
+LOOKER_CLIENT_SECRET = os.environ.get("LOOKER_CLIENT_SECRET", "BpjRy4nq6Q6cJnysjF6SQfm7")
+LOOKER_MODEL_NAME = os.environ.get("LOOKER_MODEL_NAME", "thelook_prod")
 
 # Default Policy Document in GCS
 DEFAULT_POLICY_GCS_URI = os.environ.get(
     "POLICY_GCS_URI",
-    f"gs://looker-core-export-{PROJECT_ID}/policies/Corporate_Revenue_and_Refund_Policy.pdf"
+    "gs://opm-looker-demo-policies-234424439374/policies/Corporate_Revenue_and_Refund_Policy.pdf"
 )
 LOCAL_POLICY_PDF = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
@@ -156,7 +156,7 @@ def _get_gcp_token() -> str:
 @mcp.tool()
 def looker_query(
     fields: List[str],
-    explore: str = "customer_orders",
+    explore: str = "order_items",
     model: str = LOOKER_MODEL_NAME,
     filters: Optional[Dict[str, str]] = None,
     sorts: Optional[List[str]] = None,
@@ -169,11 +169,11 @@ def looker_query(
 
     Args:
         fields: Fully-qualified LookML field names (dimensions, measures).
-                Example: ["users.country", "order_items.net_revenue", "order_items.count"]
-        explore: Looker Explore name (default: "customer_orders").
-        model: Looker Model name (default: "thelook_ecommerce_haengeun_us").
+                Example: ["users.country", "order_items.total_sale_price", "order_items.order_count"]
+        explore: Looker Explore name (default: "order_items").
+        model: Looker Model name (default: "thelook_prod").
         filters: Filter key-value pairs. Example: {"order_items.status": "Complete", "users.country": "USA,China"}
-        sorts: List of sort fields, optionally with desc. Example: ["order_items.net_revenue desc"]
+        sorts: List of sort fields, optionally with desc. Example: ["order_items.total_sale_price desc"]
         limit: Max row limit (default: 50).
 
     Returns:
@@ -222,14 +222,14 @@ def looker_query(
 
 @mcp.tool()
 def looker_get_fields(
-    explore: str = "customer_orders",
+    explore: str = "order_items",
     model: str = LOOKER_MODEL_NAME,
 ) -> Dict[str, Any]:
     """Retrieve available Dimensions and Measures from a Looker Explore.
 
     Args:
-        explore: Looker Explore name (default: "customer_orders").
-        model: Looker Model name (default: "thelook_ecommerce_haengeun_us").
+        explore: Looker Explore name (default: "order_items").
+        model: Looker Model name (default: "thelook_prod").
     """
     token = _get_looker_token()
     url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/lookml_models/{model}/explores/{explore}"

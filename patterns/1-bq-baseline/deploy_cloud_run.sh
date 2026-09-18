@@ -4,15 +4,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-bq-baseline-agent}"
-
-if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
-  echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
-  echo "Run: export GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT"
-  exit 1
-fi
 
 echo "================================================================"
 echo " Deploying Baseline BigQuery Agent to Cloud Run"

@@ -12,12 +12,12 @@ COPY sample_policies /app/sample_policies
 
 # Runtime Environment Variables (override at deploy time)
 ENV GOOGLE_GENAI_USE_VERTEXAI=1
-ENV GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT
+ENV GOOGLE_CLOUD_PROJECT=opm-looker-core-demo-instance
 ENV GOOGLE_CLOUD_LOCATION=us-central1
-ENV LOOKER_BASE_URL=https://looker.haengeun.org
-ENV LOOKER_CLIENT_ID=W75CGNHQKTFnWFyVBDgG
-ENV LOOKER_CLIENT_SECRET=JssYFsm6rVsvGpJxKBFJ238W
-ENV LOOKER_MODEL_NAME=thelook_ecommerce_haengeun_us
+ENV LOOKER_BASE_URL=https://looker.cloud-bi-opm.com
+ENV LOOKER_CLIENT_ID=B3T44CSKfBXQ7dCWQhjP
+ENV LOOKER_CLIENT_SECRET=BpjRy4nq6Q6cJnysjF6SQfm7
+ENV LOOKER_MODEL_NAME=thelook_prod
 ENV PORT=8080
 
 EXPOSE 8080
