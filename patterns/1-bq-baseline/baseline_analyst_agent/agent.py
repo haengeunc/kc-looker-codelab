@@ -7,6 +7,7 @@ from google.oauth2.credentials import Credentials
 
 from baseline_analyst_agent.bq_mcp_server import (
     _get_access_token,
+    list_datasets,
     list_tables,
     get_table_schema,
     execute_bigquery_sql,
@@ -76,6 +77,7 @@ root_agent = LlmAgent(
     ),
     instruction=BASELINE_ANALYST_PROMPT,
     tools=[
+        list_datasets,
         list_tables,
         get_table_schema,
         execute_bigquery_sql,

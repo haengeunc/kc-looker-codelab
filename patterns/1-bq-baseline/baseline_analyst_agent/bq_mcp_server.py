@@ -91,54 +91,73 @@ def _get_access_token() -> str:
 
 
 @mcp.tool()
-def list_tables(dataset_id: str = "thelook_ecommerce", project_id: str = "bigquery-public-data") -> str:
+def list_datasets(project_id: Optional[str] = None) -> str:
+    """Lists available BigQuery datasets in a Google Cloud project.
+    
+    Args:
+        project_id: GCP project ID (default: current project, e.g. opm-looker-core-demo-instance).
+    """
+    proj = project_id or DEFAULT_PROJECT_ID
+    try:
+        from google.cloud import bigquery
+        client = bigquery.Client(project=DEFAULT_PROJECT_ID)
+        datasets = [d.dataset_id for d in client.list_datasets(proj)]
+        return json.dumps({"project": proj, "datasets": datasets}, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def list_tables(dataset_id: str = "thelook_ecommerce", project_id: Optional[str] = None) -> str:
     """Lists tables available in a BigQuery dataset.
     
     Args:
         dataset_id: The BigQuery dataset ID (default: 'thelook_ecommerce').
-        project_id: The project containing the dataset (default: 'bigquery-public-data').
+        project_id: The project containing the dataset (default: current project, e.g. opm-looker-core-demo-instance).
     """
+    proj = project_id or DEFAULT_PROJECT_ID
     try:
         from google.cloud import bigquery
         client = bigquery.Client(project=DEFAULT_PROJECT_ID)
-        dataset_ref = bigquery.DatasetReference(project_id, dataset_id)
+        dataset_ref = bigquery.DatasetReference(proj, dataset_id)
         tables = [t.table_id for t in client.list_tables(dataset_ref)]
-        return json.dumps({"project": project_id, "dataset": dataset_id, "tables": tables}, indent=2)
+        return json.dumps({"project": proj, "dataset": dataset_id, "tables": tables}, indent=2)
     except Exception:
         pass
 
     token = _get_access_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/datasets/{dataset_id}/tables"
+    url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/datasets/{dataset_id}/tables"
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             tables = [t.get("tableReference", {}).get("tableId") for t in resp.json().get("tables", [])]
-            return json.dumps({"project": project_id, "dataset": dataset_id, "tables": tables}, indent=2)
+            return json.dumps({"project": proj, "dataset": dataset_id, "tables": tables}, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
     # Fallback to standard thelook_ecommerce tables
     return json.dumps({
-        "project": project_id,
+        "project": proj,
         "dataset": dataset_id,
         "tables": ["order_items", "orders", "users", "products", "inventory_items", "distribution_centers", "events"]
     }, indent=2)
 
 
 @mcp.tool()
-def get_table_schema(table_id: str, dataset_id: str = "thelook_ecommerce", project_id: str = "bigquery-public-data") -> str:
+def get_table_schema(table_id: str, dataset_id: str = "thelook_ecommerce", project_id: Optional[str] = None) -> str:
     """Gets the column names and data types for a BigQuery table.
     
     Args:
         table_id: Name of the table (e.g., 'order_items', 'users', 'products', 'orders').
         dataset_id: Dataset ID (default: 'thelook_ecommerce').
-        project_id: Project ID (default: 'bigquery-public-data').
+        project_id: Project ID (default: current project, e.g. opm-looker-core-demo-instance).
     """
+    proj = project_id or DEFAULT_PROJECT_ID
     try:
         from google.cloud import bigquery
         client = bigquery.Client(project=DEFAULT_PROJECT_ID)
-        table_ref = f"{project_id}.{dataset_id}.{table_id}"
+        table_ref = f"{proj}.{dataset_id}.{table_id}"
         table = client.get_table(table_ref)
         fields = [{"name": f.name, "type": f.field_type} for f in table.schema]
         return json.dumps({"table": table_ref, "columns": fields}, indent=2)
@@ -147,13 +166,13 @@ def get_table_schema(table_id: str, dataset_id: str = "thelook_ecommerce", proje
 
     token = _get_access_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/datasets/{dataset_id}/tables/{table_id}"
+    url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/datasets/{dataset_id}/tables/{table_id}"
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             schema_fields = resp.json().get("schema", {}).get("fields", [])
             fields = [{"name": f["name"], "type": f["type"]} for f in schema_fields]
-            return json.dumps({"table": f"{project_id}.{dataset_id}.{table_id}", "columns": fields}, indent=2)
+            return json.dumps({"table": f"{proj}.{dataset_id}.{table_id}", "columns": fields}, indent=2)
     except Exception:
         pass
 

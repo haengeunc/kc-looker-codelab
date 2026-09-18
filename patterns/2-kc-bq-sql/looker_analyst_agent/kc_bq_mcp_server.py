@@ -480,7 +480,7 @@ def check_lookml_in_knowledge_catalog(
         ],
         "views": {
             "order_items": {
-                "sourceTable": "`bigquery-public-data.thelook_ecommerce.order_items`",
+                "sourceTable": f"`{DEFAULT_PROJECT_ID}.thelook_ecommerce.order_items`",
                 "sourceFilePath": "views/order_items.view.lkml",
                 "dimensions": [
                     {"name": "id", "semantic": "DIMENSION", "sql": "${TABLE}.id"},
@@ -522,7 +522,7 @@ def check_lookml_in_knowledge_catalog(
                 ],
             },
             "users": {
-                "sourceTable": "`bigquery-public-data.thelook_ecommerce.users`",
+                "sourceTable": f"`{DEFAULT_PROJECT_ID}.thelook_ecommerce.users`",
                 "sourceFilePath": "views/users.view.lkml",
                 "dimensions": [
                     {"name": "id", "semantic": "DIMENSION", "sql": "${TABLE}.id"},
@@ -535,7 +535,7 @@ def check_lookml_in_knowledge_catalog(
                 "measures": [{"name": "count", "semantic": "MEASURE", "sql": "COUNT(DISTINCT ${TABLE}.id)"}],
             },
             "products": {
-                "sourceTable": "`bigquery-public-data.thelook_ecommerce.products`",
+                "sourceTable": f"`{DEFAULT_PROJECT_ID}.thelook_ecommerce.products`",
                 "sourceFilePath": "views/products.view.lkml",
                 "dimensions": [
                     {"name": "id", "semantic": "DIMENSION", "sql": "${TABLE}.id"},
