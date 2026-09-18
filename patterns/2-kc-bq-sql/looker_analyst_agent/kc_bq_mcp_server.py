@@ -674,7 +674,7 @@ def generate_data_chart(
     y_clean = [float(v) if v is not None else 0.0 for v in y_values]
     x_clean = [str(v) for v in x_values]
 
-    fig, ax = plt.subplots(figsize=(8.5, 4.5), dpi=140)
+    fig, ax = plt.subplots(figsize=(6.5, 3.2), dpi=75)
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#fafafa")
 

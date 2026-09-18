@@ -316,7 +316,7 @@ def generate_data_chart(chart_title: str, chart_type: str, labels: List[str], va
         import io
         import base64
 
-        fig, ax = plt.subplots(figsize=(8, 4.5), dpi=120)
+        fig, ax = plt.subplots(figsize=(6.5, 3.2), dpi=75)
         colors = ["#4285F4", "#34A853", "#FBBC05", "#EA4335", "#8AB4F8", "#81C995"]
 
         if chart_type.lower() == "pie":
