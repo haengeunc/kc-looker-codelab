@@ -308,6 +308,24 @@ def execute_bigquery_sql(
         if word in upper_sql:
             return {"error": f"Disallowed SQL statement containing '{word.strip()}'. Read-only analytical queries only."}
 
+    # 1. Primary: Official google.cloud.bigquery Client (handles ADC & corporate auth natively)
+    try:
+        from google.cloud import bigquery
+        client = bigquery.Client(project=project_id)
+        job = client.query(sql)
+        rows_formatted = [dict(row) for row in job.result()]
+        schema_fields = [f.name for f in job.schema] if job.schema else (list(rows_formatted[0].keys()) if rows_formatted else [])
+        return {
+            "jobId": job.job_id,
+            "totalRows": len(rows_formatted),
+            "totalBytesProcessed": str(job.total_bytes_processed or 0),
+            "columns": schema_fields,
+            "rows": rows_formatted,
+        }
+    except Exception:
+        pass
+
+    # 2. REST API fallback
     url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries"
     resp = requests.post(
         url,

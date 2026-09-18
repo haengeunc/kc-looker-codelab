@@ -98,6 +98,15 @@ def list_tables(dataset_id: str = "thelook_ecommerce", project_id: str = "bigque
         dataset_id: The BigQuery dataset ID (default: 'thelook_ecommerce').
         project_id: The project containing the dataset (default: 'bigquery-public-data').
     """
+    try:
+        from google.cloud import bigquery
+        client = bigquery.Client(project=DEFAULT_PROJECT_ID)
+        dataset_ref = bigquery.DatasetReference(project_id, dataset_id)
+        tables = [t.table_id for t in client.list_tables(dataset_ref)]
+        return json.dumps({"project": project_id, "dataset": dataset_id, "tables": tables}, indent=2)
+    except Exception:
+        pass
+
     token = _get_access_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/datasets/{dataset_id}/tables"
@@ -126,6 +135,16 @@ def get_table_schema(table_id: str, dataset_id: str = "thelook_ecommerce", proje
         dataset_id: Dataset ID (default: 'thelook_ecommerce').
         project_id: Project ID (default: 'bigquery-public-data').
     """
+    try:
+        from google.cloud import bigquery
+        client = bigquery.Client(project=DEFAULT_PROJECT_ID)
+        table_ref = f"{project_id}.{dataset_id}.{table_id}"
+        table = client.get_table(table_ref)
+        fields = [{"name": f.name, "type": f.field_type} for f in table.schema]
+        return json.dumps({"table": table_ref, "columns": fields}, indent=2)
+    except Exception:
+        pass
+
     token = _get_access_token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/datasets/{dataset_id}/tables/{table_id}"
@@ -135,7 +154,7 @@ def get_table_schema(table_id: str, dataset_id: str = "thelook_ecommerce", proje
             schema_fields = resp.json().get("schema", {}).get("fields", [])
             fields = [{"name": f["name"], "type": f["type"]} for f in schema_fields]
             return json.dumps({"table": f"{project_id}.{dataset_id}.{table_id}", "columns": fields}, indent=2)
-    except Exception as e:
+    except Exception:
         pass
 
     # Built-in standard schemas for thelook_ecommerce
@@ -208,8 +227,24 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
     """
     proj = project_id or DEFAULT_PROJECT_ID
     clean_sql = sql_query.strip().rstrip(";")
-    token = _get_access_token()
 
+    # 1. Primary: Official google.cloud.bigquery Client (handles ADC & corporate auth natively)
+    try:
+        from google.cloud import bigquery
+        client = bigquery.Client(project=proj)
+        job = client.query(clean_sql)
+        rows = [dict(row) for row in job.result()]
+        return json.dumps({
+            "status": "SUCCESS",
+            "totalRows": str(len(rows)),
+            "rows": rows,
+            "sql_executed": clean_sql,
+        }, default=str, indent=2)
+    except Exception:
+        pass
+
+    # 2. REST API fallback
+    token = _get_access_token()
     if token:
         try:
             url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/queries"
@@ -237,13 +272,7 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
                     "rows": rows,
                     "sql_executed": clean_sql,
                 }, indent=2)
-            else:
-                return json.dumps({
-                    "status": "ERROR",
-                    "error": resp.text,
-                    "sql_attempted": clean_sql,
-                })
-        except Exception as e:
+        except Exception:
             pass
 
     # CLI fallback
