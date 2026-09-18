@@ -5,15 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 DISPLAY_NAME="${DISPLAY_NAME:-Looker Knowledge Catalog Analyst Agent}"
-
-if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
-  echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
-  echo "Run: export GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT"
-  exit 1
-fi
 
 echo "================================================================"
 echo " Deploying Looker Analyst Agent to Vertex AI Agent Engine"
@@ -24,7 +18,7 @@ echo "================================================================"
 
 # 1. Ensure Vertex AI Reasoning Engine Service Account has permissions
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
-RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform.iam.gserviceaccount.com"
 
 echo "Granting Dataplex Knowledge Catalog, Looker, and BigQuery IAM roles to Vertex AI Agent Engine SA ($RE_SA)..."
 for ROLE in \
@@ -43,7 +37,9 @@ done
 
 # 2. Resolve adk CLI executable
 ADK_BIN="adk"
-if [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
+if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
+elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
 

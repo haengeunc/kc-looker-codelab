@@ -4,15 +4,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 DISPLAY_NAME="${DISPLAY_NAME:-Looker Governed Semantic Analyst Agent}"
-
-if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
-  echo "Error: GOOGLE_CLOUD_PROJECT is not set and gcloud default project is not configured."
-  echo "Run: export GOOGLE_CLOUD_PROJECT=YOUR-GCP-PROJECT"
-  exit 1
-fi
 
 echo "================================================================"
 echo " Deploying Governed Looker Agent to Vertex AI Agent Engine"
@@ -22,7 +16,7 @@ echo " Display Name: $DISPLAY_NAME"
 echo "================================================================"
 
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
-RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform.iam.gserviceaccount.com"
 
 echo "Granting Dataplex and Storage IAM roles to Vertex AI Agent Engine SA ($RE_SA)..."
 for ROLE in \
@@ -38,8 +32,8 @@ for ROLE in \
 done
 
 ADK_BIN="adk"
-if [[ -x "${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk" ]]; then
-  ADK_BIN="${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk"
+if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
 elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi

@@ -4,14 +4,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
+PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-opm-looker-core-demo-instance}"
 REGION="${GOOGLE_CLOUD_REGION:-us-central1}"
 DISPLAY_NAME="${DISPLAY_NAME:-bigquery-baseline-analyst-agent}"
-
-if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
-  echo "Error: GOOGLE_CLOUD_PROJECT is not set."
-  exit 1
-fi
 
 echo "================================================================"
 echo " Deploying Baseline BigQuery Agent to Vertex AI Agent Engine"
@@ -21,8 +16,10 @@ echo " Display Name: $DISPLAY_NAME"
 echo "================================================================"
 
 ADK_BIN="adk"
-if [[ -x "${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk" ]]; then
-  ADK_BIN="${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk"
+if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
+elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
 
 "$ADK_BIN" deploy agent_engine \
