@@ -161,11 +161,14 @@ def looker_query(
     filters: Optional[Dict[str, str]] = None,
     sorts: Optional[List[str]] = None,
     limit: int = 50,
+    chart_type: Optional[str] = "column",
+    vis_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Execute a governed analytical query through Looker's Semantic Modeling Engine.
+    """Execute a governed analytical query through Looker's Semantic Modeling Engine with native visualization.
 
     This tool translates your business intent into LookML dimensions and measures. Looker automatically
-    generates the dialect-specific SQL with symmetric aggregates, manages joins, and returns data rows.
+    generates the dialect-specific SQL with symmetric aggregates, manages joins, returns data rows,
+    and creates a certified, interactive Looker visualization URL.
 
     Args:
         fields: Fully-qualified LookML field names (dimensions, measures).
@@ -175,27 +178,72 @@ def looker_query(
         filters: Filter key-value pairs. Example: {"order_items.status": "Complete", "users.country": "USA,China"}
         sorts: List of sort fields, optionally with desc. Example: ["order_items.total_sale_price desc"]
         limit: Max row limit (default: 50).
+        chart_type: Chart type to configure in Looker ('column', 'bar', 'line', 'pie', 'area', 'scatter', 'table').
+        vis_config: Optional explicit Looker visualization config dict.
 
     Returns:
-        Dictionary containing Looker query status, row count, and data rows.
+        Dictionary containing Looker query status, row count, data rows, and native Looker visualization share URLs.
     """
     token = _get_looker_token()
-    url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/run/json"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    payload = {
+    # Map friendly chart_type to Looker vis_config
+    type_map = {
+        "column": "looker_column",
+        "bar": "looker_bar",
+        "line": "looker_line",
+        "pie": "looker_pie",
+        "area": "looker_area",
+        "scatter": "looker_scatter",
+        "table": "table",
+    }
+    effective_vis_config = dict(vis_config) if vis_config else {}
+    if not effective_vis_config:
+        selected_type = type_map.get((chart_type or "column").lower(), "looker_column")
+        effective_vis_config = {
+            "type": selected_type,
+            "show_value_labels": True,
+        }
+
+    # 1. Register query definition with Looker to generate interactive visualization URLs
+    create_query_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries"
+    query_payload = {
         "model": model,
         "view": explore,
         "fields": fields,
         "limit": str(limit),
+        "vis_config": effective_vis_config,
     }
     if filters:
-        payload["filters"] = filters
+        query_payload["filters"] = filters
     if sorts:
-        payload["sorts"] = sorts
+        query_payload["sorts"] = sorts
 
     start_t = time.time()
-    resp = requests.post(url, headers=headers, json=payload, timeout=45)
+    query_id = None
+    share_url = None
+    expanded_url = None
+
+    try:
+        create_resp = requests.post(create_query_url, headers=headers, json=query_payload, timeout=20)
+        if create_resp.status_code in (200, 201):
+            q_data = create_resp.json()
+            query_id = q_data.get("id")
+            share_url = q_data.get("share_url")
+            expanded_url = q_data.get("expanded_share_url") or (
+                f"{LOOKER_BASE_URL.rstrip('/')}{q_data.get('url')}" if q_data.get("url") else None
+            )
+    except Exception:
+        pass
+
+    # 2. Run query to retrieve data
+    if query_id:
+        run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/{query_id}/run/json"
+        resp = requests.get(run_url, headers=headers, timeout=45)
+    else:
+        run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/run/json"
+        resp = requests.post(run_url, headers=headers, json=query_payload, timeout=45)
+
     duration_sec = round(time.time() - start_t, 3)
 
     if resp.status_code != 200:
@@ -216,6 +264,9 @@ def looker_query(
         "sorts_applied": sorts or [],
         "execution_duration_sec": duration_sec,
         "total_rows": len(rows),
+        "looker_share_url": share_url,
+        "looker_explore_url": expanded_url,
+        "visualization_type": effective_vis_config.get("type", "looker_column"),
         "rows": rows,
     }
 
