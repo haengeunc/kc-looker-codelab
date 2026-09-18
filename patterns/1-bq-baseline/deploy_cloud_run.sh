@@ -31,8 +31,8 @@ for ROLE in \
 done
 
 ADK_BIN="adk"
-if [[ -x "${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk" ]]; then
-  ADK_BIN="${SCRIPT_DIR}/../demo-kc-bq/.venv/bin/adk"
+if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
 elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi

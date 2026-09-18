@@ -36,7 +36,9 @@ done
 
 # 2. Resolve adk CLI executable
 ADK_BIN="adk"
-if [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
+if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
+  ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
+elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
 
