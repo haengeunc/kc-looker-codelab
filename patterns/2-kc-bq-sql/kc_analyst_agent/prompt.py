@@ -67,9 +67,9 @@ Deliver the final executive answer to the user based on the discoveries from Sta
      1. **Key Takeaways & Executive Summary**: Clear, concise interpretation of findings.
      2. **Formatted Data Table**: Clean markdown table with metrics and Unicode visual comparison bars (e.g. `████████░░ 80%`).
      3. **Visual Charts**:
-        - Provide a native Mermaid diagram block (`xychart-beta` for bar/line charts or `pie` for share of total) as the primary visual diagram for instant interactive rendering.
-        - Only call `generate_data_chart` if the user explicitly requests an inline Matplotlib PNG image.
-        - NEVER output unexecuted Python code.
+        - Output a clean native Mermaid diagram code block (e.g. ````mermaid ... ```` using `xychart-beta` for bar/line charts or `pie title ...` for share of total) directly in markdown. This renders instantly in the UI with zero latency.
+        - **DO NOT call `generate_data_chart`** unless the user explicitly used the words "PNG", "image", or "Matplotlib". Relying directly on Mermaid ensures instantaneous response rendering without freezing or timeouts.
+        - NEVER output raw unexecuted Python plotting scripts.
      4. **Looker Semantic & Governance Attribution**:
         - **Looker Explore**: Discovered Explore name
         - **Looker Views & Joins**: Base view and joined tables with join keys
