@@ -102,6 +102,17 @@ Open three browser tabs:
 * **Pattern 1**: Cannot answer; no document access.
 * **Pattern 2 & 3**: Reads `Corporate_Revenue_and_Refund_Policy.pdf` from GCS, citing ASC 606 standards and the 30-day return policy.
 
+#### Test 4: Business Glossary & Data Governance Aspect Metadata
+> *"What is our official definition of Net Revenue, who is the data steward responsible for it, and what is its certification tier and compliance scope?"*
+* **Pattern 1**: Has access only to raw BigQuery column names (`sale_price`, `status`). Cannot cite ownership, audit date, or compliance rules.
+* **Pattern 2 & 3**: Queries Dataplex Knowledge Catalog Custom Aspect (`data-governance`) and Business Glossary (`corporate-commercial-glossary`):
+  - **Certification Tier**: Gold (Production Certified)
+  - **Data Steward**: Financial Planning & Analysis (FP&A) / Revenue Operations
+  - **Compliance Scope**: SOX & ASC 606 Revenue Recognition
+  - **Audit Date**: 2026-08-15
+  - **Official Glossary Term**: Total monetary value of merchandise for fulfilled orders (`order_items.status = 'Complete'`).
+
+
 ---
 
 ## 4. Deploying to Google Cloud
