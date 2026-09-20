@@ -133,8 +133,8 @@ cd patterns/3-kc-looker-intent && ./deploy_cloud_run.sh
 ### Live Cloud Run Endpoints (Google IAP Enabled)
 Anyone in the `google.com` organization can access these URLs directly in their browser. A standard Google Account login screen will prompt for corporate authentication, requiring no CLI or SSH commands:
 * **Pattern 1 (Baseline BQ Only Agent)**: [`https://bq-baseline-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=baseline_bq_only_agent`](https://bq-baseline-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=baseline_bq_only_agent)
-* **Pattern 2 (KC Analyst Agent)**: [`https://looker-analyst-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=kc_analyst_agent`](https://looker-analyst-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=kc_analyst_agent)
-* **Pattern 3 (Looker Governed KC Agent)**: [`https://looker-governed-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=looker_governed_kc_agent`](https://looker-governed-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=looker_governed_kc_agent)
+* **Pattern 2 (KC Analyst Agent)**: [`https://kc-analyst-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=kc_analyst_agent`](https://kc-analyst-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=kc_analyst_agent)
+* **Pattern 3 (Looker Governed KC Agent)**: [`https://looker-governed-kc-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=looker_governed_kc_agent`](https://looker-governed-kc-agent-4f6xueg4hq-uc.a.run.app/dev-ui/?app=looker_governed_kc_agent)
 
 
 ### Vertex AI Agent Engine & Gemini Enterprise
