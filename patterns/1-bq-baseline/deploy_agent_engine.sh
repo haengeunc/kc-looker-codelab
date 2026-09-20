@@ -15,6 +15,21 @@ echo " Region:       $REGION"
 echo " Display Name: $DISPLAY_NAME"
 echo "================================================================"
 
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
+RE_SA="service-${PROJECT_NUMBER}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+
+echo "Granting BigQuery IAM roles to Vertex AI Agent Engine SA ($RE_SA)..."
+for ROLE in \
+  "roles/aiplatform.user" \
+  "roles/bigquery.jobUser" \
+  "roles/bigquery.dataViewer"; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${RE_SA}" \
+    --role="$ROLE" \
+    --condition=None \
+    --quiet >/dev/null || true
+done
+
 ADK_BIN="adk"
 if [[ -x "${SCRIPT_DIR}/../../.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/../../.venv/bin/adk"
