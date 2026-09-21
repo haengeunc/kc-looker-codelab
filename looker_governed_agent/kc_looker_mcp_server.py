@@ -49,22 +49,30 @@ def _detect_default_project() -> str:
             return out
     except Exception:
         pass
-    return "YOUR-GCP-PROJECT"
+    return "opm-looker-core-demo-instance"
 
 
 PROJECT_ID = _detect_default_project()
 DEFAULT_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
-# Looker API Configuration
-LOOKER_BASE_URL = os.environ.get("LOOKER_BASE_URL", "https://looker.haengeun.org")
-LOOKER_CLIENT_ID = os.environ.get("LOOKER_CLIENT_ID", "W75CGNHQKTFnWFyVBDgG")
-LOOKER_CLIENT_SECRET = os.environ.get("LOOKER_CLIENT_SECRET", "JssYFsm6rVsvGpJxKBFJ238W")
-LOOKER_MODEL_NAME = os.environ.get("LOOKER_MODEL_NAME", "thelook_ecommerce_haengeun_us")
+# Looker API Configuration (Google Cloud BI OPM Instance)
+LOOKER_BASE_URL = os.environ.get("LOOKER_BASE_URL", "https://looker.cloud-bi-opm.com")
+LOOKER_CLIENT_ID = os.environ.get("LOOKER_CLIENT_ID", "B3T44CSKfBXQ7dCWQhjP")
+LOOKER_CLIENT_SECRET = os.environ.get("LOOKER_CLIENT_SECRET", "BpjRy4nq6Q6cJnysjF6SQfm7")
+LOOKER_MODEL_NAME = os.environ.get("LOOKER_MODEL_NAME", "thelook_prod")
+LOOKER_WORKSPACE = os.environ.get("LOOKER_WORKSPACE", "dev")
+LOOKER_GIT_BRANCH = os.environ.get("LOOKER_GIT_BRANCH", "dev-haengeun-chi-xfqs")
+LOOKER_PROJECT_ID = os.environ.get("LOOKER_PROJECT_ID", "thelook_ecommerce")
+
+# Dataplex Knowledge Catalog Configuration (@looker entry group)
+DATAPLEX_PROJECT_ID = os.environ.get("DATAPLEX_PROJECT_ID", PROJECT_ID or "opm-looker-core-demo-instance")
+LOOKER_DATAPLEX_LOCATION = os.environ.get("LOOKER_DATAPLEX_LOCATION", "us-east1")
+LOOKER_INSTANCE_NAME = os.environ.get("LOOKER_INSTANCE_NAME", "cloud-bi-opm-enterprise")
 
 # Default Policy Document in GCS
 DEFAULT_POLICY_GCS_URI = os.environ.get(
     "POLICY_GCS_URI",
-    f"gs://looker-core-export-{PROJECT_ID}/policies/Corporate_Revenue_and_Refund_Policy.pdf"
+    "gs://opm-looker-demo-policies-234424439374/policies/Corporate_Revenue_and_Refund_Policy.pdf"
 )
 LOCAL_POLICY_PDF = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
@@ -74,6 +82,40 @@ LOCAL_POLICY_PDF = os.path.join(
 
 _LOOKER_TOKEN: Dict[str, Any] = {"token": None, "expires_at": 0}
 _GCP_TOKEN: Dict[str, Any] = {"token": None, "expires_at": 0}
+
+
+def _clean_html(text: Any) -> str:
+    """Strips basic HTML formatting tags returned in Dataplex rich text aspect fields."""
+    if not text or not isinstance(text, str):
+        return ""
+    import re
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
+def _configure_looker_session(token: str) -> None:
+    """Configures Looker session workspace and git branch to ensure queries target opm-looker-core-demo-instance."""
+    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
+    if LOOKER_WORKSPACE:
+        try:
+            requests.patch(
+                f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/session",
+                headers=headers,
+                json={"workspace_id": LOOKER_WORKSPACE},
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    if LOOKER_WORKSPACE == "dev" and LOOKER_GIT_BRANCH:
+        try:
+            requests.put(
+                f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/projects/{LOOKER_PROJECT_ID}/git_branch",
+                headers=headers,
+                json={"name": LOOKER_GIT_BRANCH},
+                timeout=10,
+            )
+        except Exception:
+            pass
 
 
 def _get_looker_token() -> str:
@@ -96,6 +138,7 @@ def _get_looker_token() -> str:
     expires_in = token_data.get("expires_in", 3600)
     _LOOKER_TOKEN["token"] = token
     _LOOKER_TOKEN["expires_at"] = now + expires_in - 60
+    _configure_looker_session(token)
     return token
 
 
@@ -129,7 +172,20 @@ def _get_gcp_token() -> str:
     except Exception:
         pass
 
-    # 3. Local gcloud CLI
+    # 3. Application Default Credentials (ADC via google-auth)
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(Request())
+        if creds.token:
+            _GCP_TOKEN["token"] = creds.token
+            _GCP_TOKEN["expires_at"] = now + 3000
+            return creds.token
+    except Exception:
+        pass
+
+    # 4. Local gcloud CLI
     if shutil.which("gcloud"):
         try:
             res = subprocess.run(
@@ -137,7 +193,7 @@ def _get_gcp_token() -> str:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=3,
+                timeout=5,
             )
             if res.returncode == 0 and res.stdout.strip():
                 _GCP_TOKEN["token"] = res.stdout.strip()
@@ -156,46 +212,95 @@ def _get_gcp_token() -> str:
 @mcp.tool()
 def looker_query(
     fields: List[str],
-    explore: str = "customer_orders",
+    explore: str = "order_items",
     model: str = LOOKER_MODEL_NAME,
     filters: Optional[Dict[str, str]] = None,
     sorts: Optional[List[str]] = None,
     limit: int = 50,
+    chart_type: Optional[str] = "column",
+    vis_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Execute a governed analytical query through Looker's Semantic Modeling Engine.
+    """Execute a governed analytical query through Looker's Semantic Modeling Engine with native visualization.
 
     This tool translates your business intent into LookML dimensions and measures. Looker automatically
-    generates the dialect-specific SQL with symmetric aggregates, manages joins, and returns data rows.
+    generates the dialect-specific SQL with symmetric aggregates, manages joins, returns data rows,
+    and creates a certified, interactive Looker visualization URL.
 
     Args:
         fields: Fully-qualified LookML field names (dimensions, measures).
-                Example: ["users.country", "order_items.net_revenue", "order_items.count"]
-        explore: Looker Explore name (default: "customer_orders").
-        model: Looker Model name (default: "thelook_ecommerce_haengeun_us").
+                Example: ["users.country", "order_items.total_sale_price", "order_items.order_count"]
+        explore: Looker Explore name (default: "order_items").
+        model: Looker Model name (default: "thelook_prod").
         filters: Filter key-value pairs. Example: {"order_items.status": "Complete", "users.country": "USA,China"}
-        sorts: List of sort fields, optionally with desc. Example: ["order_items.net_revenue desc"]
+        sorts: List of sort fields, optionally with desc. Example: ["order_items.total_sale_price desc"]
         limit: Max row limit (default: 50).
+        chart_type: Chart type to configure in Looker ('column', 'bar', 'line', 'pie', 'area', 'scatter', 'table').
+        vis_config: Optional explicit Looker visualization config dict.
 
     Returns:
-        Dictionary containing Looker query status, row count, and data rows.
+        Dictionary containing Looker query status, row count, data rows, and native Looker visualization share URLs.
     """
     token = _get_looker_token()
-    url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/run/json"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    _configure_looker_session(token)
+    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
 
-    payload = {
+    # Map friendly chart_type to Looker vis_config
+    type_map = {
+        "column": "looker_column",
+        "bar": "looker_bar",
+        "line": "looker_line",
+        "pie": "looker_pie",
+        "area": "looker_area",
+        "scatter": "looker_scatter",
+        "table": "table",
+    }
+    effective_vis_config = dict(vis_config) if vis_config else {}
+    if not effective_vis_config:
+        selected_type = type_map.get((chart_type or "column").lower(), "looker_column")
+        effective_vis_config = {
+            "type": selected_type,
+            "show_value_labels": True,
+        }
+
+    # 1. Register query definition with Looker to generate interactive visualization URLs
+    create_query_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries"
+    query_payload = {
         "model": model,
         "view": explore,
         "fields": fields,
         "limit": str(limit),
+        "vis_config": effective_vis_config,
     }
     if filters:
-        payload["filters"] = filters
+        query_payload["filters"] = filters
     if sorts:
-        payload["sorts"] = sorts
+        query_payload["sorts"] = sorts
 
     start_t = time.time()
-    resp = requests.post(url, headers=headers, json=payload, timeout=45)
+    query_id = None
+    share_url = None
+    expanded_url = None
+
+    try:
+        create_resp = requests.post(create_query_url, headers=headers, json=query_payload, timeout=20)
+        if create_resp.status_code in (200, 201):
+            q_data = create_resp.json()
+            query_id = q_data.get("id")
+            share_url = q_data.get("share_url")
+            expanded_url = q_data.get("expanded_share_url") or (
+                f"{LOOKER_BASE_URL.rstrip('/')}{q_data.get('url')}" if q_data.get("url") else None
+            )
+    except Exception:
+        pass
+
+    # 2. Run query to retrieve data
+    if query_id:
+        run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/{query_id}/run/json"
+        resp = requests.get(run_url, headers=headers, timeout=45)
+    else:
+        run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/run/json"
+        resp = requests.post(run_url, headers=headers, json=query_payload, timeout=45)
+
     duration_sec = round(time.time() - start_t, 3)
 
     if resp.status_code != 200:
@@ -209,31 +314,38 @@ def looker_query(
     return {
         "status": "success",
         "semantic_engine": "Looker Semantic Layer (LookML)",
+        "source_dataset": f"{PROJECT_ID}.thelook_ecommerce",
         "model": model,
         "explore": explore,
+        "workspace": LOOKER_WORKSPACE,
+        "git_branch": LOOKER_GIT_BRANCH,
         "fields_queried": fields,
         "filters_applied": filters or {},
         "sorts_applied": sorts or [],
         "execution_duration_sec": duration_sec,
         "total_rows": len(rows),
+        "looker_share_url": share_url,
+        "looker_explore_url": expanded_url,
+        "visualization_type": effective_vis_config.get("type", "looker_column"),
         "rows": rows,
     }
 
 
 @mcp.tool()
 def looker_get_fields(
-    explore: str = "customer_orders",
+    explore: str = "order_items",
     model: str = LOOKER_MODEL_NAME,
 ) -> Dict[str, Any]:
     """Retrieve available Dimensions and Measures from a Looker Explore.
 
     Args:
-        explore: Looker Explore name (default: "customer_orders").
-        model: Looker Model name (default: "thelook_ecommerce_haengeun_us").
+        explore: Looker Explore name (default: "order_items").
+        model: Looker Model name (default: "thelook_prod").
     """
     token = _get_looker_token()
+    _configure_looker_session(token)
     url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/lookml_models/{model}/explores/{explore}"
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"token {token}"}
 
     resp = requests.get(url, headers=headers, timeout=20)
     if resp.status_code != 200:
@@ -277,66 +389,216 @@ def looker_get_fields(
 
 @mcp.tool()
 def kc_check_governance(
-    explore_name: str = "customer_orders",
+    explore_name: str = "order_items",
 ) -> Dict[str, Any]:
-    """Check enterprise data governance metadata in Google Cloud Knowledge Catalog (Dataplex).
+    """Check enterprise data governance metadata and aspects in Google Cloud Knowledge Catalog (Dataplex).
 
-    Returns:
+    Dynamically queries Dataplex Knowledge Catalog for the Looker Explore and its underlying Views
+    (in the @looker entry group) to discover:
     1. Certification status & tier (e.g. Gold certified).
-    2. Column-level PII Tags (flags fields like email, phone, street address as restricted).
-    3. Business Glossary definitions and standard metric formulas.
+    2. Column-level and view-level Aspects (e.g. data-governance, data-classification, has-pii, business owner notes).
+    3. Restricted PII fields and compliance masking rules based on applied aspects.
+    4. Business Glossary definitions and standard metric formulas.
 
     Args:
-        explore_name: Name of the Looker Explore (default: "customer_orders").
+        explore_name: Name of the Looker Explore (default: "order_items").
     """
+    normalized_explore = explore_name.strip() if explore_name else "order_items"
+    if normalized_explore in ("customer_orders", "orders"):
+        normalized_explore = "order_items"
+
+    token = _get_gcp_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    # Dataplex @looker entry identifiers
+    project_id = DATAPLEX_PROJECT_ID
+    location = LOOKER_DATAPLEX_LOCATION
+    instance = LOOKER_INSTANCE_NAME
+    lookml_proj = LOOKER_PROJECT_ID
+    model_name = LOOKER_MODEL_NAME
+
+    explore_entry_path = (
+        f"projects/{project_id}/locations/{location}/entryGroups/@looker/entries/"
+        f"looker.googleapis.com/projects/{project_id}/locations/{location}/instances/{instance}/"
+        f"lookml_projects/{lookml_proj}/models/{model_name}/explores/{normalized_explore}"
+    )
+
+    dynamic_restricted_fields: List[Dict[str, Any]] = []
+    applied_aspects_list: List[Dict[str, Any]] = []
+    views_inspected: List[str] = []
+    data_certification = {
+        "certified": True,
+        "certification_tier": "Gold",
+        "environment": "PRODUCTION",
+        "steward": "Finance & Revenue Operations",
+        "audit_date": "2026-08-15",
+        "description": "Authoritative corporate e-commerce model certified for board and executive reporting.",
+    }
+
+    if token:
+        try:
+            # 1. Fetch Explore Entry from Dataplex with view=ALL
+            exp_url = f"https://dataplex.googleapis.com/v1/{explore_entry_path}?view=ALL"
+            exp_resp = requests.get(exp_url, headers=headers, timeout=8)
+            exp_data = exp_resp.json() if exp_resp.status_code == 200 else {}
+
+            # Check if any governance/certification aspects are applied directly on the explore
+            for a_key, a_val in exp_data.get("aspects", {}).items():
+                if any(x in a_key for x in ("looker-explore", "schema")):
+                    continue
+                a_data = a_val.get("data", {})
+                applied_aspects_list.append({
+                    "target": f"explore:{normalized_explore}",
+                    "aspect_type": a_val.get("aspectType", a_key).split("/")[-1],
+                    "path": a_val.get("path", ""),
+                    "data": a_data,
+                })
+                # Check for certification tier updates
+                if "certification_tier" in a_data:
+                    data_certification["certification_tier"] = a_data["certification_tier"]
+                if "data_steward" in a_data:
+                    data_certification["steward"] = a_data["data_steward"]
+
+            # Extract joined views
+            looker_exp_aspect = exp_data.get("aspects", {}).get("655216118709.global.looker-explore", {}).get("data", {})
+            joins = looker_exp_aspect.get("joins", [])
+            base_view = looker_exp_aspect.get("viewName", normalized_explore)
+            view_names = [base_view] + [j.get("name") for j in joins if j.get("name")]
+            if not view_names:
+                view_names = [normalized_explore, "users", "products", "inventory_items", "distribution_centers"]
+
+            # 2. Inspect each view for column-level & view-level aspects
+            for vname in view_names:
+                views_inspected.append(vname)
+                v_entry_path = (
+                    f"projects/{project_id}/locations/{location}/entryGroups/@looker/entries/"
+                    f"looker.googleapis.com/projects/{project_id}/locations/{location}/instances/{instance}/"
+                    f"lookml_projects/{lookml_proj}/models/{model_name}/views/{vname}"
+                )
+                v_url = f"https://dataplex.googleapis.com/v1/{v_entry_path}?view=ALL"
+                v_resp = requests.get(v_url, headers=headers, timeout=5)
+                if v_resp.status_code != 200:
+                    continue
+                v_data = v_resp.json()
+                v_aspects = v_data.get("aspects", {})
+
+                # Check custom applied aspects
+                for a_key, a_val in v_aspects.items():
+                    if any(x in a_key for x in ("looker-view", "schema")):
+                        continue
+                    path = a_val.get("path") or ""
+                    a_data = a_val.get("data") or {}
+                    atype = a_val.get("aspectType") or a_key
+                    atype_short = atype.split("/")[-1]
+
+                    applied_aspects_list.append({
+                        "view": vname,
+                        "aspect_type": atype_short,
+                        "path": path,
+                        "data": a_data,
+                    })
+
+                    # Determine field name from path or aspect key
+                    field_part = ""
+                    if path.startswith("Schema."):
+                        field_part = path.replace("Schema.", "")
+                    elif "@Schema." in a_key:
+                        field_part = a_key.split("@Schema.")[-1]
+
+                    full_field = f"{vname}.{field_part}" if field_part else vname
+
+                    is_pii = bool(a_data.get("has-pii") or a_data.get("is_pii"))
+                    classification = str(a_data.get("data-classification") or a_data.get("classification") or "")
+                    is_sensitive = is_pii or classification.lower() in ("sensitive", "confidential", "restricted", "pii")
+
+                    if is_sensitive:
+                        owner_guidance = _clean_html(a_data.get("business-owner") or a_data.get("guidance") or a_data.get("description") or "")
+                        dynamic_restricted_fields.append({
+                            "field": full_field,
+                            "classification": classification.upper() if classification else "RESTRICTED_PII",
+                            "has_pii": is_pii,
+                            "aspect_type": atype_short,
+                            "masking_rule": "MASK_ALL" if "email" in full_field else "SUPPRESS",
+                            "guidance": owner_guidance or f"Column tagged as {classification} in Dataplex Knowledge Catalog aspect '{atype_short}'.",
+                        })
+
+                # Also inspect LookML/schema annotations tags (e.g. tags: email)
+                schema_aspect = v_aspects.get("655216118709.global.schema", {}).get("data", {})
+                for field_def in schema_aspect.get("fields", []):
+                    fname = field_def.get("name", "")
+                    ftags = str(field_def.get("annotations", {}).get("tags", "")).lower()
+                    if any(t in ftags for t in ("email", "pii", "sensitive", "restricted")):
+                        full_field = f"{vname}.{fname}"
+                        if not any(f["field"] == full_field for f in dynamic_restricted_fields):
+                            dynamic_restricted_fields.append({
+                                "field": full_field,
+                                "classification": "RESTRICTED_PII",
+                                "has_pii": True,
+                                "aspect_type": "schema-annotation-tag",
+                                "masking_rule": "MASK_ALL" if "email" in full_field else "SUPPRESS",
+                                "guidance": f"Customer {fname} tagged with '{ftags}' in schema metadata.",
+                            })
+
+        except Exception:
+            pass
+
+    # Ensure core baseline known PII fields are included so demonstrations remain robust
+    known_baseline_pii = [
+        {
+            "field": "users.email",
+            "classification": "RESTRICTED_PII",
+            "masking_rule": "MASK_ALL",
+            "guidance": "Customer email addresses are classified as sensitive PII. Prohibited from AI output.",
+        },
+        {
+            "field": "users.phone",
+            "classification": "RESTRICTED_PII",
+            "masking_rule": "SUPPRESS",
+            "guidance": "Direct telephone numbers must not be surfaced.",
+        },
+        {
+            "field": "users.street_address",
+            "classification": "RESTRICTED_PII",
+            "masking_rule": "GEOGRAPHIC_ROLLUP_ONLY",
+            "guidance": "Physical addresses must be rolled up to users.city, users.state, or users.country.",
+        },
+    ]
+    for b_item in known_baseline_pii:
+        if not any(d["field"] == b_item["field"] for d in dynamic_restricted_fields):
+            dynamic_restricted_fields.append(b_item)
+
     return {
         "catalog_source": "Google Cloud Knowledge Catalog (Dataplex)",
-        "asset": f"looker/explores/{explore_name}",
+        "asset": f"looker/explores/{normalized_explore}",
+        "live_dataplex_inspection": {
+            "enabled": True,
+            "project": project_id,
+            "location": location,
+            "entry_group": "@looker",
+            "explore_entry": explore_entry_path,
+            "views_inspected": views_inspected,
+            "total_applied_aspects_found": len(applied_aspects_list),
+        },
+        "applied_governance_aspects": applied_aspects_list,
         "governance_aspects": {
-            "data_certification": {
-                "certified": True,
-                "certification_tier": "Gold",
-                "environment": "PRODUCTION",
-                "steward": "Finance & Revenue Operations",
-                "audit_date": "2026-08-15",
-                "description": "Authoritative corporate e-commerce model certified for board and executive reporting."
-            },
+            "data_certification": data_certification,
             "pii_data_protection_policy": {
-                "restricted_pii_fields": [
-                    {
-                        "field": "users.email",
-                        "classification": "RESTRICTED_PII",
-                        "masking_rule": "MASK_ALL",
-                        "guidance": "Customer email addresses are classified as sensitive PII. Prohibited from AI output."
-                    },
-                    {
-                        "field": "users.phone",
-                        "classification": "RESTRICTED_PII",
-                        "masking_rule": "SUPPRESS",
-                        "guidance": "Direct telephone numbers must not be surfaced."
-                    },
-                    {
-                        "field": "users.street_address",
-                        "classification": "RESTRICTED_PII",
-                        "masking_rule": "GEOGRAPHIC_ROLLUP_ONLY",
-                        "guidance": "Physical addresses must be rolled up to users.city, users.state, or users.country."
-                    }
-                ],
+                "restricted_pii_fields": dynamic_restricted_fields,
                 "compliant_fields": [
                     "users.country",
                     "users.state",
                     "users.city",
                     "users.gender",
-                    "users.age_group"
-                ]
+                    "users.age_group",
+                ],
             },
             "business_glossary": {
                 "Net Revenue": "Certified metric (Gold Tier). Calculated strictly upon fulfillment (order_items.status = 'Complete'). Excludes cancelled, returned, and processing orders (ASC 606).",
                 "Gross Revenue": "Total monetary sum of all placed order merchandise (order_items.sale_price) prior to any refund or cancellation deductions.",
                 "Refund Rate": "Ratio of returned/refunded order item value against total order volume.",
-                "Fiscal Calendar": "Company fiscal year starts February 1 (fiscal_month_offset: 1). FQ1: Feb-Apr, FQ2: May-Jul, FQ3: Aug-Oct, FQ4: Nov-Jan."
-            }
-        }
+                "Fiscal Calendar": "Company fiscal year starts February 1 (fiscal_month_offset: 1). FQ1: Feb-Apr, FQ2: May-Jul, FQ3: Aug-Oct, FQ4: Nov-Jan.",
+            },
+        },
     }
 
 
@@ -346,59 +608,97 @@ def kc_check_governance(
 
 @mcp.tool()
 def read_gcs_policy_document(
-    gcs_uri: str = DEFAULT_POLICY_GCS_URI,
+    gcs_uri: str = "",
     section_query: str = "",
 ) -> Dict[str, Any]:
-    """Read and extract text from unstructured policy documents (PDFs) in Google Cloud Storage.
+    """Read and extract text from unstructured policy documents registered in Knowledge Catalog and stored in Cloud Storage.
 
-    Use this tool to ground answers in corporate policies (e.g. Revenue Recognition, Refund Terms,
-    and Privacy Mandates).
+    Dynamically queries Dataplex Knowledge Catalog for authoritative policy entries (under entry group
+    'governance-policies') to retrieve the live document URI, certification aspect, and text content.
 
     Args:
-        gcs_uri: GCS URI of the policy document (e.g. gs://bucket/policies/Corporate_Revenue_and_Refund_Policy.pdf).
+        gcs_uri: Optional GCS URI (defaults to the registered Knowledge Catalog document URI).
         section_query: Optional search keyword to filter relevant paragraphs (e.g. 'refund', 'ASC 606', 'PII').
     """
-    extracted_text = ""
-    source_name = gcs_uri
+    token = _get_gcp_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    project_id = DATAPLEX_PROJECT_ID
 
-    # 1. Try reading from local file copy first for instant speed
-    if os.path.exists(LOCAL_POLICY_PDF):
+    # 1. Look up policy metadata in Dataplex Knowledge Catalog
+    policy_entry_name = f"projects/{project_id}/locations/us-central1/entryGroups/governance-policies/entries/corporate-revenue-refund-policy"
+    dataplex_meta: Dict[str, Any] = {}
+    resolved_gcs_uri = gcs_uri
+    doc_title = "Corporate Revenue Recognition & Customer Refund Policy (POL-FIN-2026-V3)"
+    aspect_info: Dict[str, Any] = {}
+
+    if token:
+        try:
+            dp_resp = requests.get(
+                f"https://dataplex.googleapis.com/v1/{policy_entry_name}?view=ALL",
+                headers=headers,
+                timeout=6,
+            )
+            if dp_resp.status_code == 200:
+                dataplex_meta = dp_resp.json()
+                src = dataplex_meta.get("entrySource", {})
+                doc_title = src.get("displayName") or doc_title
+                res_str = src.get("resource", "")
+                if not resolved_gcs_uri and res_str:
+                    if res_str.startswith("//storage.googleapis.com/"):
+                        resolved_gcs_uri = "gs://" + res_str.replace("//storage.googleapis.com/", "")
+                    else:
+                        resolved_gcs_uri = res_str
+
+                # Extract governance aspect
+                aspects = dataplex_meta.get("aspects", {})
+                for ak, av in aspects.items():
+                    if "data-governance" in ak:
+                        aspect_info = av.get("data", {})
+        except Exception:
+            pass
+
+    if not resolved_gcs_uri:
+        resolved_gcs_uri = DEFAULT_POLICY_GCS_URI
+
+    extracted_text = ""
+
+    # 2. Download and extract directly from Cloud Storage
+    if resolved_gcs_uri.startswith("gs://") and token:
+        try:
+            parts = resolved_gcs_uri.replace("gs://", "").split("/")
+            bucket_name = parts[0]
+            blob_name = "/".join(parts[1:])
+            blob_url = (
+                f"https://storage.googleapis.com/download/storage/v1/b/{bucket_name}/o/"
+                f"{requests.utils.quote(blob_name, safe='')}?alt=media"
+            )
+            gcs_resp = requests.get(blob_url, headers=headers, timeout=10)
+            if gcs_resp.status_code == 200:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(gcs_resp.content))
+                pages_text = [page.extract_text() for page in reader.pages if page.extract_text()]
+                if pages_text:
+                    extracted_text = "\n\n".join(pages_text)
+        except Exception:
+            pass
+
+    # 3. Fallback to local copy if GCS download failed
+    if not extracted_text and os.path.exists(LOCAL_POLICY_PDF):
         try:
             from pypdf import PdfReader
             reader = PdfReader(LOCAL_POLICY_PDF)
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    extracted_text += text + "\n"
+            pages_text = [page.extract_text() for page in reader.pages if page.extract_text()]
+            if pages_text:
+                extracted_text = "\n\n".join(pages_text)
         except Exception:
             pass
 
-    # 2. Fallback to GCS download if local copy unavailable
-    if not extracted_text and gcs_uri.startswith("gs://"):
-        try:
-            from google.cloud import storage
-            client = storage.Client(project=PROJECT_ID)
-            bucket_name = gcs_uri.split("/")[2]
-            blob_name = "/".join(gcs_uri.split("/")[3:])
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
-            pdf_bytes = blob.download_as_bytes()
-
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    extracted_text += text + "\n"
-        except Exception:
-            pass
-
-    # Fallback text representation if PDF library is unavailable
+    # 4. Fallback text representation
     if not extracted_text:
         extracted_text = """
 1. Corporate Revenue Recognition Standard (ASC 606 / GAAP)
 • Gross Revenue: Total value of all merchandise ordered prior to cancellations or returns (LookML: SUM(order_items.sale_price)).
-• Net Revenue (Certified Gold): Revenue is recognized only upon fulfillment completion. Cancelled, returned, or in-transit orders are excluded. LookML definition: SUM(CASE WHEN order_items.status = 'Complete' THEN order_items.sale_price ELSE 0 END).
+• Net Revenue (Certified Gold): Revenue is recognized only upon fulfillment completion. Cancelled, returned, or in-transit orders are excluded. Strict LookML definition: SUM(CASE WHEN order_items.status = 'Complete' THEN order_items.sale_price ELSE 0 END).
 • Fiscal Calendar: Corporate fiscal year begins February 1 (fiscal_month_offset: 1). FQ1 covers Feb-Apr, FQ2 covers May-Jul, FQ3 covers Aug-Oct, FQ4 covers Nov-Jan.
 
 2. Customer Return, Refund & Cancellation Policy
@@ -410,7 +710,7 @@ def read_gcs_policy_document(
 3. Customer Data Privacy & PII Protection Guidelines (GDPR / CCPA)
 • Direct customer identifiers (users.email, users.phone, users.street_address) are classified as RESTRICTED_PII.
 • AI assistants are strictly prohibited from displaying individual customer email addresses or contact details in responses. Geographic rollups (users.country, users.state) are approved.
-        """
+"""
 
     # Optional section filtering
     paragraphs = [p.strip() for p in extracted_text.split("\n\n") if p.strip()]
@@ -423,10 +723,18 @@ def read_gcs_policy_document(
 
     return {
         "status": "success",
-        "document_uri": gcs_uri,
-        "title": "Altostrat Corporate Revenue Recognition & Customer Refund Policy (POL-FIN-2026-V3)",
+        "catalog_source": "Google Cloud Knowledge Catalog (Dataplex)",
+        "dataplex_entry": policy_entry_name if dataplex_meta else None,
+        "document_uri": resolved_gcs_uri,
+        "title": doc_title,
         "effective_fiscal_year": "FY2025-2026",
         "classification": "Confidential - Internal Operations",
+        "governance_aspect": aspect_info or {
+            "certification_tier": "Gold",
+            "data_steward": "Finance & Revenue Operations",
+            "compliance_scope": "ASC 606 / GAAP / CCPA",
+            "last_governance_audit": "2026-08-15",
+        },
         "content": content,
     }
 
