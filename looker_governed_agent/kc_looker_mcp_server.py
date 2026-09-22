@@ -383,6 +383,76 @@ def looker_get_fields(
     }
 
 
+def _get_dataplex_client() -> Optional[Any]:
+    """Instantiates a google.cloud.dataplex_v1.CatalogServiceClient using ambient/default credentials."""
+    try:
+        from google.cloud import dataplex_v1
+        import google.auth
+
+        auth_fn = getattr(google.auth, "_orig_default", google.auth.default)
+        creds, _ = auth_fn(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        return dataplex_v1.CatalogServiceClient(credentials=creds)
+    except Exception:
+        return None
+
+
+def _search_dataplex_entries(
+    query: str,
+    project_id: str = DATAPLEX_PROJECT_ID,
+    semantic_search: bool = True,
+    page_size: int = 15,
+) -> List[Dict[str, Any]]:
+    """Performs dynamic semantic search over Dataplex Knowledge Catalog entries using SearchEntriesRequest.
+
+    Leverages dataplex_v1.SearchEntriesRequest(semantic_search=True) to dynamically discover
+    explores, views, and governance policy documents rather than relying strictly on fixed path formatting.
+    Falls back gracefully to Dataplex REST searchEntries if the client library encounters an error.
+    """
+    # 1. Primary: Official dataplex_v1.CatalogServiceClient with SearchEntriesRequest
+    client = _get_dataplex_client()
+    if client:
+        try:
+            from google.cloud import dataplex_v1
+            from google.protobuf.json_format import MessageToDict
+
+            search_parent = f"projects/{project_id}/locations/global"
+            search_query = f"{query} projectid:({project_id})" if f"projectid:({project_id})" not in query else query
+            request = dataplex_v1.SearchEntriesRequest(
+                name=search_parent,
+                query=search_query,
+                page_size=page_size,
+                semantic_search=semantic_search,
+            )
+            response = client.search_entries(request=request)
+            results = [MessageToDict(r.dataplex_entry._pb) for r in response.results]
+            if results:
+                return results
+        except Exception:
+            pass
+
+    # 2. Secondary fallback: Direct Dataplex REST API
+    token = _get_gcp_token()
+    if token:
+        try:
+            url = f"https://dataplex.googleapis.com/v1/projects/{project_id}/locations/global:searchEntries"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            payload = {
+                "query": f"{query} projectid:({project_id})",
+                "pageSize": page_size,
+                "semanticSearch": semantic_search,
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = [item.get("dataplexEntry", {}) for item in data.get("results", []) if item.get("dataplexEntry")]
+                if results:
+                    return results
+        except Exception:
+            pass
+
+    return []
+
+
 # ==============================================================================
 # 2. KNOWLEDGE CATALOG GOVERNANCE TOOLS (Certification, PII Tags & Glossary)
 # ==============================================================================
@@ -394,7 +464,8 @@ def kc_check_governance(
     """Check enterprise data governance metadata and aspects in Google Cloud Knowledge Catalog (Dataplex).
 
     Dynamically queries Dataplex Knowledge Catalog for the Looker Explore and its underlying Views
-    (in the @looker entry group) to discover:
+    (in the @looker entry group) using dynamic semantic search (dataplex_v1.SearchEntriesRequest with
+    semantic_search=True) to discover:
     1. Certification status & tier (e.g. Gold certified).
     2. Column-level and view-level Aspects (e.g. data-governance, data-classification, has-pii, business owner notes).
     3. Restricted PII fields and compliance masking rules based on applied aspects.
@@ -417,11 +488,59 @@ def kc_check_governance(
     lookml_proj = LOOKER_PROJECT_ID
     model_name = LOOKER_MODEL_NAME
 
-    explore_entry_path = (
+    # Fixed path definition for deterministic fallback
+    fallback_explore_entry_path = (
         f"projects/{project_id}/locations/{location}/entryGroups/@looker/entries/"
         f"looker.googleapis.com/projects/{project_id}/locations/{location}/instances/{instance}/"
         f"lookml_projects/{lookml_proj}/models/{model_name}/explores/{normalized_explore}"
     )
+
+    # 1. Dynamic Semantic Search via dataplex_v1.SearchEntriesRequest(semantic_search=True)
+    semantic_matches = _search_dataplex_entries(
+        query=explore_name,
+        project_id=project_id,
+        semantic_search=True,
+        page_size=15,
+    )
+
+    # Filter and rank explore candidates from semantic search
+    explore_candidates = [
+        m for m in semantic_matches
+        if "looker-explore" in m.get("entryType", "") or "/explores/" in m.get("name", "")
+    ]
+
+    def _score_explore_match(entry: Dict[str, Any]) -> int:
+        name = entry.get("name", "")
+        score = 0
+        if f"/explores/{normalized_explore}" in name or name.endswith(f"/{normalized_explore}"):
+            score += 100
+        if f"/models/{model_name}/" in name:
+            score += 50
+        if f"/instances/{instance}/" in name:
+            score += 25
+        if "/entryGroups/@looker/" in name:
+            score += 10
+        return score
+
+    ranked_explores = sorted(explore_candidates, key=_score_explore_match, reverse=True)
+    resolved_explore_entry_path = ranked_explores[0]["name"] if ranked_explores else None
+    discovery_method = "dynamic_semantic_search (dataplex_v1.SearchEntriesRequest)" if resolved_explore_entry_path else "deterministic_fallback"
+
+    # If no matching explore was found in semantic search, use fixed path formatting fallback
+    if not resolved_explore_entry_path:
+        resolved_explore_entry_path = fallback_explore_entry_path
+
+    # Discover related governance policy documents from semantic search
+    related_governance_policies = [
+        {
+            "title": m.get("entrySource", {}).get("displayName") or m.get("name", "").split("/")[-1],
+            "entry_name": m.get("name"),
+            "entry_type": m.get("entryType", "").split("/")[-1],
+            "resource": m.get("entrySource", {}).get("resource"),
+        }
+        for m in semantic_matches
+        if "policy" in m.get("entryType", "").lower() or "/governance-policies/" in m.get("name", "")
+    ]
 
     dynamic_restricted_fields: List[Dict[str, Any]] = []
     applied_aspects_list: List[Dict[str, Any]] = []
@@ -437,8 +556,8 @@ def kc_check_governance(
 
     if token:
         try:
-            # 1. Fetch Explore Entry from Dataplex with view=ALL
-            exp_url = f"https://dataplex.googleapis.com/v1/{explore_entry_path}?view=ALL"
+            # 2. Fetch Explore Entry from Dataplex with view=ALL
+            exp_url = f"https://dataplex.googleapis.com/v1/{resolved_explore_entry_path}?view=ALL"
             exp_resp = requests.get(exp_url, headers=headers, timeout=8)
             exp_data = exp_resp.json() if exp_resp.status_code == 200 else {}
 
@@ -467,14 +586,13 @@ def kc_check_governance(
             if not view_names:
                 view_names = [normalized_explore, "users", "products", "inventory_items", "distribution_centers"]
 
-            # 2. Inspect each view for column-level & view-level aspects
+            # Parent model path resolved from explore entry
+            parent_model_path = resolved_explore_entry_path.split("/explores/")[0]
+
+            # 3. Inspect each view for column-level & view-level aspects
             for vname in view_names:
                 views_inspected.append(vname)
-                v_entry_path = (
-                    f"projects/{project_id}/locations/{location}/entryGroups/@looker/entries/"
-                    f"looker.googleapis.com/projects/{project_id}/locations/{location}/instances/{instance}/"
-                    f"lookml_projects/{lookml_proj}/models/{model_name}/views/{vname}"
-                )
+                v_entry_path = f"{parent_model_path}/views/{vname}"
                 v_url = f"https://dataplex.googleapis.com/v1/{v_entry_path}?view=ALL"
                 v_resp = requests.get(v_url, headers=headers, timeout=5)
                 if v_resp.status_code != 200:
@@ -572,13 +690,21 @@ def kc_check_governance(
         "asset": f"looker/explores/{normalized_explore}",
         "live_dataplex_inspection": {
             "enabled": True,
+            "discovery_method": discovery_method,
+            "semantic_search_request": {
+                "parent": f"projects/{project_id}/locations/global",
+                "query": f"{explore_name} projectid:({project_id})",
+                "semantic_search": True,
+                "total_matches_found": len(semantic_matches),
+            },
             "project": project_id,
             "location": location,
             "entry_group": "@looker",
-            "explore_entry": explore_entry_path,
+            "explore_entry": resolved_explore_entry_path,
             "views_inspected": views_inspected,
             "total_applied_aspects_found": len(applied_aspects_list),
         },
+        "related_governance_policies": related_governance_policies,
         "applied_governance_aspects": applied_aspects_list,
         "governance_aspects": {
             "data_certification": data_certification,
