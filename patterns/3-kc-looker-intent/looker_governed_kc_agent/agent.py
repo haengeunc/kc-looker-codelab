@@ -9,11 +9,12 @@ from google.oauth2.credentials import Credentials
 
 from looker_governed_kc_agent.kc_looker_mcp_server import (
     _get_gcp_token,
+    get_current_datetime,
     looker_query,
     looker_get_fields,
     kc_check_governance,
+    list_governance_policies,
     read_gcs_policy_document,
-    generate_data_chart,
 )
 from looker_governed_kc_agent.prompt import (
     GOVERNANCE_STAGE_PROMPT,
@@ -58,8 +59,7 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
             quota_project_id=quota_project_id,
             default_scopes=default_scopes,
         )
-        if getattr(creds, "valid", False):
-            return creds, proj or PROJECT_ID
+        return creds, proj or PROJECT_ID
     except Exception:
         pass
     token = _get_gcp_token()
@@ -84,7 +84,9 @@ governance_policy_agent = LlmAgent(
     description="Enforces Knowledge Catalog governance (PII guardrails, Gold certification) and reads GCS corporate policies.",
     instruction=GOVERNANCE_STAGE_PROMPT,
     tools=[
+        get_current_datetime,
         kc_check_governance,
+        list_governance_policies,
         read_gcs_policy_document,
     ],
 )
@@ -96,9 +98,9 @@ looker_execution_agent = LlmAgent(
     description="Executes deterministic semantic queries via Looker MCP (Text-to-Intent) and provides interactive Looker visualization links.",
     instruction=LOOKER_STAGE_PROMPT,
     tools=[
+        get_current_datetime,
         looker_query,
         looker_get_fields,
-        generate_data_chart,
     ],
 )
 

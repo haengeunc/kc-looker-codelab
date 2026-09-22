@@ -132,24 +132,71 @@ def search_knowledge_catalog(
     query: str,
     system: str = "LOOKER",
     project_id: str = DEFAULT_PROJECT_ID,
+    semantic_search: bool = True,
 ) -> Dict[str, Any]:
-    """Search Google Cloud Knowledge Catalog (Dataplex) for Looker Explores, Looker Views, or Glossaries.
+    """Search Google Cloud Knowledge Catalog (Dataplex) for Looker Explores, Looker Views, or Glossaries using Dynamic Semantic Search.
 
     Args:
         query: Search term (e.g., "customer_orders", "order_items", "net_revenue", "users", "products").
         system: Source system filter. Defaults to "LOOKER" (use "" for all systems).
         project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
+        semantic_search: Whether to enable AI-powered semantic matching (default: True).
 
     Returns:
         Dictionary containing matching Knowledge Catalog entries with their entryName, entryType,
         displayName, description, system, and fullyQualifiedName.
     """
     full_query = f"{query} system={system}" if system else query
+
+    # 1. Primary: Official dataplex_v1.CatalogServiceClient with SearchEntriesRequest
+    try:
+        from google.cloud import dataplex_v1
+        from google.protobuf.json_format import MessageToDict
+        import google.auth
+
+        auth_fn = getattr(google.auth, "_orig_default", google.auth.default)
+        creds, _ = auth_fn(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        client = dataplex_v1.CatalogServiceClient(credentials=creds)
+        req = dataplex_v1.SearchEntriesRequest(
+            name=f"projects/{project_id}/locations/global",
+            query=f"{full_query} projectid:({project_id})",
+            page_size=20,
+            semantic_search=semantic_search,
+        )
+        resp = client.search_entries(request=req)
+        results = []
+        for item in resp.results:
+            d = MessageToDict(item.dataplex_entry._pb)
+            src = d.get("entrySource", {})
+            results.append(
+                {
+                    "entryName": d.get("name"),
+                    "entryType": d.get("entryType", "").split("/")[-1],
+                    "fullyQualifiedName": d.get("fullyQualifiedName"),
+                    "displayName": src.get("displayName"),
+                    "description": src.get("description"),
+                    "system": src.get("system"),
+                    "location": src.get("location"),
+                    "updateTime": d.get("updateTime"),
+                }
+            )
+        if results:
+            return {
+                "query": full_query,
+                "discovery_method": "dynamic_semantic_search (dataplex_v1.SearchEntriesRequest)",
+                "semantic_search": semantic_search,
+                "totalResults": len(results),
+                "results": results,
+            }
+    except Exception:
+        pass
+
+    # 2. Secondary fallback: Direct Dataplex REST API
     url = f"https://dataplex.googleapis.com/v1/projects/{project_id}/locations/global:searchEntries"
     resp = requests.post(
         url,
         headers=_headers(project_id),
-        json={"query": full_query, "pageSize": 20},
+        json={"query": full_query, "pageSize": 20, "semanticSearch": semantic_search},
         timeout=30,
     )
     if resp.status_code != 200:
@@ -172,7 +219,13 @@ def search_knowledge_catalog(
                 "updateTime": entry.get("updateTime"),
             }
         )
-    return {"query": full_query, "totalResults": len(results), "results": results}
+    return {
+        "query": full_query,
+        "discovery_method": "rest_search_entries",
+        "semantic_search": semantic_search,
+        "totalResults": len(results),
+        "results": results,
+    }
 
 
 @mcp.tool()
@@ -561,12 +614,14 @@ DEFAULT_POLICY_GCS_URI = os.environ.get(
     "POLICY_GCS_URI",
     "gs://opm-looker-demo-policies-234424439374/policies/Corporate_Revenue_and_Refund_Policy.pdf"
 )
+KOREA_POLICY_GCS_URI = "gs://opm-looker-demo-policies-234424439374/policies/South_Korea_Outerwear_Promotional_Campaign_Policy.pdf"
 LOCAL_POLICY_PDF = os.path.join(os.path.dirname(__file__), "../../sample_policies/Corporate_Revenue_and_Refund_Policy.pdf")
+LOCAL_KOREA_POLICY_PDF = os.path.join(os.path.dirname(__file__), "../../sample_policies/South_Korea_Outerwear_Promotional_Campaign_Policy.pdf")
 
 
 @mcp.tool()
 def read_gcs_policy_document(
-    gcs_uri: str = DEFAULT_POLICY_GCS_URI,
+    gcs_uri: str = "",
     section_query: str = "",
 ) -> Dict[str, Any]:
     """Read and extract text from unstructured policy documents (PDFs) in Google Cloud Storage.
@@ -578,18 +633,23 @@ def read_gcs_policy_document(
         gcs_uri: GCS URI of the policy document (e.g. gs://bucket/policies/Corporate_Revenue_and_Refund_Policy.pdf).
         section_query: Optional search keyword to filter relevant paragraphs (e.g. 'refund', 'ASC 606', 'PII').
     """
-    extracted_text = ""
-    source_name = gcs_uri
+    query_str = f"{gcs_uri} {section_query}".lower()
+    is_korea = any(k in query_str for k in ["korea", "south korea", "campaign", "outerwear", "coat", "discount"])
+    target_gcs_uri = gcs_uri or (KOREA_POLICY_GCS_URI if is_korea else DEFAULT_POLICY_GCS_URI)
+    target_local_pdf = LOCAL_KOREA_POLICY_PDF if is_korea else LOCAL_POLICY_PDF
 
-    if os.path.exists(LOCAL_POLICY_PDF):
+    extracted_text = ""
+    source_name = target_gcs_uri
+
+    if os.path.exists(target_local_pdf):
         try:
             from pypdf import PdfReader
-            reader = PdfReader(LOCAL_POLICY_PDF)
+            reader = PdfReader(target_local_pdf)
             for page in reader.pages:
                 text = page.extract_text()
                 if text:
                     extracted_text += text + "\n"
-            source_name = f"local_cached ({LOCAL_POLICY_PDF})"
+            source_name = f"local_cached ({target_local_pdf})"
         except Exception:
             pass
 

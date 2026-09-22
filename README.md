@@ -151,8 +151,8 @@ All three agents can be deployed to Vertex AI Agent Engine (Reasoning Engine) an
   * **Deploy Command**: `cd patterns/2-kc-bq-sql && ./deploy_agent_engine.sh`
 
 * **Pattern 3 (`looker_governed_kc_agent`)**:
-  * **Resource**: `projects/234424439374/locations/us-central1/reasoningEngines/6774825062739476480`
-  * **Console Playground**: [Open Agent Engine Playground (Pattern 3)](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/us-central1/agent-engines/6774825062739476480/playground?project=opm-looker-core-demo-instance)
+  * **Resource**: `projects/234424439374/locations/us-central1/reasoningEngines/1416051679563874304`
+  * **Console Playground**: [Open Agent Engine Playground (Pattern 3)](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/us-central1/agent-engines/1416051679563874304/playground?project=opm-looker-core-demo-instance)
   * **Deploy Command**: `cd patterns/3-kc-looker-intent && ./deploy_agent_engine.sh`
 
 #### Registering in Gemini Enterprise:

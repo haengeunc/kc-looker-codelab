@@ -37,9 +37,15 @@ elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
 
+EXTRA_ARGS=()
+if [[ -n "${AGENT_ENGINE_ID:-}" ]]; then
+  EXTRA_ARGS+=("--agent_engine_id=${AGENT_ENGINE_ID}")
+fi
+
 "$ADK_BIN" deploy agent_engine \
   --project="$PROJECT_ID" \
   --region="$REGION" \
   --display_name="$DISPLAY_NAME" \
   --description="Baseline BigQuery Analyst Agent (LLM + BigQuery MCP only)" \
+  "${EXTRA_ARGS[@]}" \
   "${SCRIPT_DIR}/baseline_bq_only_agent"

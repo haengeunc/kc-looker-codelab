@@ -10,6 +10,7 @@ Provides direct BigQuery access tools without Knowledge Catalog governance:
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
@@ -75,17 +76,33 @@ def _get_access_token() -> str:
         pass
 
     try:
-        out = subprocess.check_output(
-            ["gcloud", "auth", "print-access-token"],
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        ).decode().strip()
-        if out:
-            _TOKEN_CACHE["token"] = out
-            _TOKEN_CACHE["expires_at"] = now + 1800
-            return out
+        import google.auth
+        import google.auth.transport.requests
+
+        auth_fn = getattr(google.auth, "_orig_default", google.auth.default)
+        creds, _ = auth_fn(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        auth_req = google.auth.transport.requests.Request()
+        creds.refresh(auth_req)
+        if creds.token:
+            _TOKEN_CACHE["token"] = creds.token
+            _TOKEN_CACHE["expires_at"] = now + 3000
+            return _TOKEN_CACHE["token"]
     except Exception:
         pass
+
+    if shutil.which("gcloud"):
+        try:
+            out = subprocess.check_output(
+                ["gcloud", "auth", "print-access-token"],
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            ).decode().strip()
+            if out:
+                _TOKEN_CACHE["token"] = out
+                _TOKEN_CACHE["expires_at"] = now + 1800
+                return out
+        except Exception:
+            pass
 
     return ""
 
@@ -100,7 +117,7 @@ def list_datasets(project_id: Optional[str] = None) -> str:
     proj = project_id or DEFAULT_PROJECT_ID
     try:
         from google.cloud import bigquery
-        client = bigquery.Client(project=DEFAULT_PROJECT_ID)
+        client = bigquery.Client(project=proj)
         datasets = [d.dataset_id for d in client.list_datasets(proj)]
         return json.dumps({"project": proj, "datasets": datasets}, indent=2)
     except Exception as e:
@@ -118,7 +135,7 @@ def list_tables(dataset_id: str = "thelook_ecommerce", project_id: Optional[str]
     proj = project_id or DEFAULT_PROJECT_ID
     try:
         from google.cloud import bigquery
-        client = bigquery.Client(project=DEFAULT_PROJECT_ID)
+        client = bigquery.Client(project=proj)
         dataset_ref = bigquery.DatasetReference(proj, dataset_id)
         tables = [t.table_id for t in client.list_tables(dataset_ref)]
         return json.dumps({"project": proj, "dataset": dataset_id, "tables": tables}, indent=2)
@@ -156,7 +173,7 @@ def get_table_schema(table_id: str, dataset_id: str = "thelook_ecommerce", proje
     proj = project_id or DEFAULT_PROJECT_ID
     try:
         from google.cloud import bigquery
-        client = bigquery.Client(project=DEFAULT_PROJECT_ID)
+        client = bigquery.Client(project=proj)
         table_ref = f"{proj}.{dataset_id}.{table_id}"
         table = client.get_table(table_ref)
         fields = [{"name": f.name, "type": f.field_type} for f in table.schema]
@@ -246,21 +263,29 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
     """
     proj = project_id or DEFAULT_PROJECT_ID
     clean_sql = sql_query.strip().rstrip(";")
+    last_error = ""
 
     # 1. Primary: Official google.cloud.bigquery Client (handles ADC & corporate auth natively)
     try:
         from google.cloud import bigquery
         client = bigquery.Client(project=proj)
-        job = client.query(clean_sql)
-        rows = [dict(row) for row in job.result()]
-        return json.dumps({
-            "status": "SUCCESS",
-            "totalRows": str(len(rows)),
-            "rows": rows,
-            "sql_executed": clean_sql,
-        }, default=str, indent=2)
-    except Exception:
-        pass
+        try:
+            job = client.query(clean_sql)
+            rows = [dict(row) for row in job.result()]
+            return json.dumps({
+                "status": "SUCCESS",
+                "totalRows": str(len(rows)),
+                "rows": rows,
+                "sql_executed": clean_sql,
+            }, default=str, indent=2)
+        except Exception as query_err:
+            return json.dumps({
+                "status": "ERROR",
+                "error": f"BigQuery query error: {str(query_err)}",
+                "sql_attempted": clean_sql,
+            })
+    except Exception as init_err:
+        last_error = f"Client init error: {str(init_err)}"
 
     # 2. REST API fallback
     token = _get_access_token()
@@ -280,6 +305,12 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
             resp = requests.post(url, headers=headers, json=payload, timeout=35)
             if resp.status_code == 200:
                 data = resp.json()
+                if "errors" in data and data["errors"]:
+                    return json.dumps({
+                        "status": "ERROR",
+                        "error": str(data["errors"]),
+                        "sql_attempted": clean_sql,
+                    })
                 schema_fields = [f["name"] for f in data.get("schema", {}).get("fields", [])]
                 rows = []
                 for row_obj in data.get("rows", []):
@@ -291,103 +322,45 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
                     "rows": rows,
                     "sql_executed": clean_sql,
                 }, indent=2)
-        except Exception:
-            pass
+            else:
+                last_error = f"REST HTTP {resp.status_code}: {resp.text}"
+        except Exception as rest_err:
+            last_error = f"REST exception: {str(rest_err)}"
 
-    # CLI fallback
-    try:
-        cmd = [
-            "bq", "query",
-            "--nouse_legacy_sql",
-            "--format=json",
-            f"--project_id={proj}",
-            clean_sql,
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if res.returncode == 0:
-            rows = json.loads(res.stdout.strip() or "[]")
+    # 3. CLI fallback (only if bq CLI is installed)
+    if shutil.which("bq"):
+        try:
+            cmd = [
+                "bq", "query",
+                "--nouse_legacy_sql",
+                "--format=json",
+                f"--project_id={proj}",
+                clean_sql,
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if res.returncode == 0:
+                rows = json.loads(res.stdout.strip() or "[]")
+                return json.dumps({
+                    "status": "SUCCESS",
+                    "totalRows": str(len(rows)),
+                    "rows": rows,
+                    "sql_executed": clean_sql,
+                }, indent=2)
             return json.dumps({
-                "status": "SUCCESS",
-                "totalRows": str(len(rows)),
-                "rows": rows,
-                "sql_executed": clean_sql,
-            }, indent=2)
-        return json.dumps({
-            "status": "ERROR",
-            "error": res.stderr.strip(),
-            "sql_attempted": clean_sql,
-        })
-    except Exception as e:
-        return json.dumps({
-            "status": "ERROR",
-            "error": str(e),
-            "sql_attempted": clean_sql,
-        })
+                "status": "ERROR",
+                "error": res.stderr.strip(),
+                "sql_attempted": clean_sql,
+            })
+        except Exception as cli_err:
+            last_error = f"CLI error: {str(cli_err)}"
 
-
-@mcp.tool()
-def generate_data_chart(chart_title: str, chart_type: str, labels: List[str], values: List[float], y_axis_label: str = "Value") -> str:
-    """Generates an executive-ready chart as an inline base64-encoded PNG image."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import io
-        import base64
-
-        fig, ax = plt.subplots(figsize=(6.5, 3.2), dpi=75)
-        colors = ["#4285F4", "#34A853", "#FBBC05", "#EA4335", "#8AB4F8", "#81C995"]
-
-        if chart_type.lower() == "pie":
-            wedges, texts, autotexts = ax.pie(
-                values,
-                labels=labels,
-                autopct="%1.1f%%",
-                startangle=140,
-                colors=colors[:len(values)],
-            )
-            for at in autotexts:
-                at.set_color("white")
-                at.set_fontsize(10)
-        elif chart_type.lower() == "line":
-            ax.plot(labels, values, marker="o", color="#4285F4", linewidth=2.5, markersize=6)
-            ax.set_ylabel(y_axis_label)
-            ax.grid(True, linestyle="--", alpha=0.5)
-        else:
-            bar_colors = [colors[i % len(colors)] for i in range(len(values))]
-            bars = ax.bar(labels, values, color=bar_colors, edgecolor="#202124", linewidth=0.5)
-            ax.set_ylabel(y_axis_label)
-            ax.grid(axis="y", linestyle="--", alpha=0.4)
-            for bar in bars:
-                h = bar.get_height()
-                ax.annotate(
-                    f"{h:,.0f}" if h >= 100 else f"{h:,.2f}",
-                    xy=(bar.get_x() + bar.get_width() / 2, h),
-                    xytext=(0, 3),
-                    textcoords="offset points",
-                    ha="center",
-                    va="bottom",
-                    fontsize=9,
-                )
-
-        ax.set_title(chart_title, fontsize=12, fontweight="bold", pad=12)
-        plt.xticks(rotation=25 if len(labels) > 4 else 0, ha="right" if len(labels) > 4 else "center")
-        plt.tight_layout()
-
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight")
-        buf.seek(0)
-        img_b64 = base64.b64encode(buf.read()).decode("utf-8")
-        plt.close(fig)
-
-        return json.dumps({
-            "status": "SUCCESS",
-            "chart_title": chart_title,
-            "image_markdown": f"![{chart_title}](data:image/png;base64,{img_b64})",
-        })
-    except Exception as e:
-        return json.dumps({"status": "ERROR", "error": f"Failed to render chart: {str(e)}"})
+    return json.dumps({
+        "status": "ERROR",
+        "error": f"Failed to execute BigQuery query: {last_error or 'No available query backend'}",
+        "sql_attempted": clean_sql,
+    })
 
 
 if __name__ == "__main__":
     mcp.run()
+

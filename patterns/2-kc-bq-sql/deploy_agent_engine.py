@@ -34,18 +34,8 @@ PROJECT_ID = _detect_default_project()
 REGION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 AGENT_DIR = str((Path(__file__).parent / "kc_analyst_agent").resolve())
 
-# 1. Obtain valid access token from gcloud CLI
-res = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, check=True)
-token = res.stdout.strip()
-
-
-# 2. Patch google.auth.default BEFORE importing ADK CLI or Vertex AI SDK
-def _patched_default(scopes=None, request=None, quota_project_id=None, default_scopes=None):
-    creds = Credentials(token=token, quota_project_id=quota_project_id or PROJECT_ID)
-    return creds, PROJECT_ID
-
-
-google.auth.default = _patched_default
+os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
+os.environ["GOOGLE_CLOUD_LOCATION"] = REGION
 
 # 3. Invoke ADK CLI deploy agent_engine
 from google.adk.cli.cli_tools_click import main

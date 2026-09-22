@@ -11,7 +11,6 @@ from baseline_bq_only_agent.bq_mcp_server import (
     list_tables,
     get_table_schema,
     execute_bigquery_sql,
-    generate_data_chart,
 )
 from baseline_bq_only_agent.prompt import BASELINE_ANALYST_PROMPT
 
@@ -53,8 +52,7 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
             quota_project_id=quota_project_id,
             default_scopes=default_scopes,
         )
-        if getattr(creds, "valid", False):
-            return creds, proj or PROJECT_ID
+        return creds, proj or PROJECT_ID
     except Exception:
         pass
     creds = Credentials(
@@ -81,6 +79,6 @@ root_agent = LlmAgent(
         list_tables,
         get_table_schema,
         execute_bigquery_sql,
-        generate_data_chart,
     ],
 )
+

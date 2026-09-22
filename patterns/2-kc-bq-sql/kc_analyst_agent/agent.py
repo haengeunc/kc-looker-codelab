@@ -65,8 +65,7 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
             quota_project_id=quota_project_id,
             default_scopes=default_scopes,
         )
-        if getattr(creds, "valid", False):
-            return creds, proj or PROJECT_ID
+        return creds, proj or PROJECT_ID
     except Exception:
         pass
     creds = Credentials(

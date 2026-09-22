@@ -4,5 +4,5 @@ google-auth>=2.58.0
 google-cloud-aiplatform>=1.85.0
 requests>=2.32.0
 mcp>=2.2.0
-matplotlib>=3.8.0
+google-cloud-bigquery>=3.25.0
 protobuf>=5.0.0

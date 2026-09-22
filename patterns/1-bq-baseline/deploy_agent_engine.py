@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Deploys kc_analyst_agent to Vertex AI Agent Engine using active gcloud credentials."""
+"""Deploys baseline_bq_only_agent to Vertex AI Agent Engine using active gcloud credentials."""
 
 import os
 from pathlib import Path
 import subprocess
 import sys
-import google.auth
-from google.oauth2.credentials import Credentials
 
 
 def _detect_default_project() -> str:
@@ -32,22 +30,12 @@ def _detect_default_project() -> str:
 
 PROJECT_ID = _detect_default_project()
 REGION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
-AGENT_DIR = str((Path(__file__).parent / "kc_analyst_agent").resolve())
+AGENT_DIR = str((Path(__file__).parent / "baseline_bq_only_agent").resolve())
 
-# 1. Obtain valid access token from gcloud CLI
-res = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, check=True)
-token = res.stdout.strip()
+os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
+os.environ["GOOGLE_CLOUD_LOCATION"] = REGION
 
-
-# 2. Patch google.auth.default BEFORE importing ADK CLI or Vertex AI SDK
-def _patched_default(scopes=None, request=None, quota_project_id=None, default_scopes=None):
-    creds = Credentials(token=token, quota_project_id=quota_project_id or PROJECT_ID)
-    return creds, PROJECT_ID
-
-
-google.auth.default = _patched_default
-
-# 3. Invoke ADK CLI deploy agent_engine
+# Invoke ADK CLI deploy agent_engine
 from google.adk.cli.cli_tools_click import main
 
 if __name__ == "__main__":
@@ -57,8 +45,8 @@ if __name__ == "__main__":
         "agent_engine",
         f"--project={PROJECT_ID}",
         f"--region={REGION}",
-        "--display_name=Looker Knowledge Catalog Analyst Agent",
-        "--description=Enterprise Data Analyst Agent grounded in Looker semantic metadata from Knowledge Catalog (Dataplex) and BigQuery.",
+        "--display_name=bigquery-baseline-analyst-agent",
+        "--description=Baseline BigQuery Analyst Agent (LLM + BigQuery MCP only)",
     ]
     agent_engine_id = os.environ.get("AGENT_ENGINE_ID")
     if agent_engine_id:
