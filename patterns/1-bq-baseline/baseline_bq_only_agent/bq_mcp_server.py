@@ -30,8 +30,19 @@ except ImportError:
 mcp = FastMCP("BigQuery-Baseline-Analyst-MCP")
 
 MANAGED_BQ_MCP_URL = "https://bigquery.googleapis.com/mcp"
-DEFAULT_PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "opm-looker-core-demo-instance")
+DEFAULT_PROJECT_ID = "opm-looker-core-demo-instance"
 _TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0}
+
+
+def _normalize_project_id(proj: Optional[str] = None) -> str:
+    """Normalizes project ID to canonical alphanumeric ID if missing or numeric."""
+    if not proj:
+        env_proj = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT")
+        proj = env_proj or DEFAULT_PROJECT_ID
+    # Map project numbers or invalid placeholders to canonical project ID
+    if proj in ("234424439374", "YOUR-GCP-PROJECT") or str(proj).isdigit():
+        return DEFAULT_PROJECT_ID
+    return proj
 
 
 def _get_auth_token() -> str:
@@ -115,7 +126,7 @@ def _call_managed_bq_mcp(
         Structured content dictionary or parsed JSON result.
     """
     token = _get_auth_token()
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
+    proj = _normalize_project_id(project_id)
     headers = {
         "Content-Type": "application/json",
         "X-Goog-User-Project": proj,
@@ -143,9 +154,14 @@ def _call_managed_bq_mcp(
             return {"error": rpc_res["error"]}
 
         result = rpc_res.get("result", {})
-        if "structuredContent" in result and result["structuredContent"]:
-            return result["structuredContent"]
+        if result.get("isError"):
+            err_msg = ""
+            for content_item in result.get("content", []):
+                if content_item.get("type") == "text":
+                    err_msg += content_item.get("text", "")
+            return {"error": err_msg or "Managed BigQuery MCP returned isError=True"}
 
+        # First check text content which contains serialized JSON from Managed BigQuery MCP
         for content_item in result.get("content", []):
             if content_item.get("type") == "text":
                 text_val = content_item.get("text", "")
@@ -153,6 +169,9 @@ def _call_managed_bq_mcp(
                     return json.loads(text_val)
                 except Exception:
                     return {"text": text_val}
+
+        if "structuredContent" in result and result["structuredContent"]:
+            return result["structuredContent"]
 
         return result
     except Exception as e:
@@ -166,7 +185,7 @@ def list_datasets(project_id: Optional[str] = None) -> str:
     Args:
         project_id: GCP project ID (default: current project, e.g. opm-looker-core-demo-instance).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
+    proj = _normalize_project_id(project_id)
     res = _call_managed_bq_mcp("list_dataset_ids", {"projectId": proj, "pageSize": 50}, project_id=proj)
 
     if "error" in res:
@@ -195,7 +214,7 @@ def list_tables(dataset_id: str = "thelook_ecommerce", project_id: Optional[str]
         dataset_id: The BigQuery dataset ID (default: 'thelook_ecommerce').
         project_id: The project containing the dataset (default: current project, e.g. opm-looker-core-demo-instance).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
+    proj = _normalize_project_id(project_id)
     res = _call_managed_bq_mcp("list_table_ids", {
         "projectId": proj,
         "datasetId": dataset_id,
@@ -236,7 +255,7 @@ def get_table_schema(
         dataset_id: Dataset ID (default: 'thelook_ecommerce').
         project_id: Project ID (default: current project, e.g. opm-looker-core-demo-instance).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
+    proj = _normalize_project_id(project_id)
     res = _call_managed_bq_mcp("get_table_info", {
         "projectId": proj,
         "datasetId": dataset_id,
@@ -268,39 +287,79 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
         sql_query: The GoogleSQL SELECT query to execute.
         project_id: GCP Project ID to bill for execution (defaults to current project).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
+    proj = _normalize_project_id(project_id)
     clean_sql = sql_query.strip().rstrip(";")
+    last_error = ""
 
+    # 1. Primary: Official Managed BigQuery MCP service
     res = _call_managed_bq_mcp("execute_sql_readonly", {
         "projectId": proj,
         "query": clean_sql,
     }, project_id=proj)
 
-    if "error" in res:
-        return json.dumps({
-            "status": "ERROR",
-            "error": res["error"],
-            "sql_attempted": clean_sql,
-        }, indent=2)
+    if "error" not in res:
+        schema_fields = [f.get("name") for f in res.get("schema", {}).get("fields", [])]
+        raw_rows = res.get("rows", [])
+        rows = []
+        for r in raw_rows:
+            row_cells = r.get("f", [])
+            values = [c.get("v") for c in row_cells]
+            if schema_fields:
+                rows.append(dict(zip(schema_fields, values)))
+            else:
+                rows.append(values)
 
-    schema_fields = [f.get("name") for f in res.get("schema", {}).get("fields", [])]
-    raw_rows = res.get("rows", [])
-    rows = []
-    for r in raw_rows:
-        row_cells = r.get("f", [])
-        values = [c.get("v") for c in row_cells]
-        if schema_fields:
-            rows.append(dict(zip(schema_fields, values)))
-        else:
-            rows.append(values)
+        return json.dumps({
+            "status": "SUCCESS",
+            "totalRows": str(len(rows)),
+            "rows": rows,
+            "sql_executed": clean_sql,
+            "source": "https://bigquery.googleapis.com/mcp (execute_sql_readonly)",
+        }, default=str, indent=2)
+
+    last_error = str(res["error"])
+
+    # 2. Resilient fallback: BigQuery REST API if MCP reports transient or formatting error
+    token = _get_auth_token()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-User-Project": proj,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/queries"
+        resp = requests.post(
+            url,
+            headers=headers,
+            json={"query": clean_sql, "useLegacySql": False, "maxResults": 1000},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if "errors" not in data:
+                schema_fields = [f["name"] for f in data.get("schema", {}).get("fields", [])]
+                rows = []
+                for row in data.get("rows", []):
+                    values = [cell.get("v") for cell in row.get("f", [])]
+                    rows.append(dict(zip(schema_fields, values)))
+
+                return json.dumps({
+                    "status": "SUCCESS",
+                    "totalRows": str(len(rows)),
+                    "rows": rows,
+                    "sql_executed": clean_sql,
+                    "source": "bigquery_rest_fallback",
+                }, default=str, indent=2)
+    except Exception:
+        pass
 
     return json.dumps({
-        "status": "SUCCESS",
-        "totalRows": str(len(rows)),
-        "rows": rows,
-        "sql_executed": clean_sql,
-        "source": "https://bigquery.googleapis.com/mcp (execute_sql_readonly)",
-    }, default=str, indent=2)
+        "status": "ERROR",
+        "error": last_error,
+        "sql_attempted": clean_sql,
+    }, indent=2)
 
 
 @mcp.tool()
