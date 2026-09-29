@@ -1028,6 +1028,15 @@ def generate_data_chart(
                 ha="center", va="bottom", fontsize=8.5, fontweight="500"
             )
         plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0)
+    elif chart_type_lower in ("area",):
+        ax.plot(x_clean, y_clean, color=color, linewidth=2, zorder=3)
+        ax.fill_between(range(len(x_clean)), y_clean, color=color, alpha=0.35, zorder=2)
+        ax.grid(linestyle="--", alpha=0.35, zorder=0)
+        plt.xticks(range(len(x_clean)), x_clean, rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0)
+    elif chart_type_lower in ("scatter",):
+        ax.scatter(x_clean, y_clean, color=color, s=70, alpha=0.85, zorder=3)
+        ax.grid(linestyle="--", alpha=0.35, zorder=0)
+        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0)
     elif chart_type_lower == "pie":
         colors = palette[:len(x_clean)] if len(x_clean) <= len(palette) else None
         wedges, texts, autotexts = ax.pie(

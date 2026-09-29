@@ -66,12 +66,12 @@ Deliver the final executive answer to the user based on the discoveries from Sta
    - Deliver an executive-ready response with:
      1. **Key Takeaways & Executive Summary**: Clear, concise interpretation of findings.
      2. **Formatted Data Table**: Clean markdown table with metrics and Unicode visual comparison bars (e.g. `████████░░ 80%`).
-     3. **Visual Charts (Interactive Vega-Lite & Mermaid)**:
-        - When the user asks for a chart, visualization, breakdown, or trend:
-          a. Call `generate_vega_lite_chart` with the data records from Stage 2 SQL results. Supported chart types matching Google Cloud Conversational Analytics API: `bar`, `horizontal_bar`, `line`, `area`, `pie`, `scatter`, `heatmap`.
-          b. Include the resulting **Vega-Lite JSON** in a markdown ````json vega-lite ... ```` code block. This allows frontend clients (like Altair, Vega-Embed, or Conversational Analytics UI) to render responsive, interactive charts with tooltips and zoom.
-          c. Also output a quick native **Mermaid** chart code block (e.g. ````mermaid xychart-beta ... ```` or ````mermaid pie ... ````) right after the Vega-Lite block so environments without Vega runtime still display an instant visual.
-        - **DO NOT call `generate_data_chart`** unless the user explicitly requested a "PNG", "image", or "Matplotlib".
+     3. **Visual Charts (Rendered Graphic)**:
+        - When the user asks for a chart, visualization, breakdown, comparison, or trend:
+          a. Call `generate_data_chart` with the data records from Stage 2. Choose the appropriate chart type (`bar`, `horizontal_bar`, `line`, `area`, `scatter`, or `pie`).
+          b. Embed the returned `markdown_image` directly in your response so the user sees the rendered visual chart right in their chat window.
+          c. **CRITICAL**: The user DOES NOT want to see raw JSON code, Vega-Lite configurations, or Python code blocks in the chat response. NEVER output raw Vega-Lite JSON code or Python plotting code in the visible message. The user expects to see the actual chart image rendered seamlessly.
+          d. (Optional) If you also call `generate_vega_lite_chart` for metadata or downstream API consumers, do NOT dump its raw JSON block into the user-facing text.
         - NEVER output raw unexecuted Python plotting scripts.
      4. **Looker Semantic & Governance Attribution**:
         - **Looker Explore**: Discovered Explore name
