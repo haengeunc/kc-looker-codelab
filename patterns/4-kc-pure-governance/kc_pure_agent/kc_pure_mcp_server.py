@@ -645,9 +645,8 @@ def generate_data_chart(
     y_label: str = "",
     color: str = "#1a73e8",
 ) -> Dict[str, Any]:
-    """Render an executive statistical visualization chart as an inline base64 PNG data URI.
-    Call this tool ONCE at the end of your workflow when a visual chart or plot is requested.
-    Do NOT call this tool multiple times.
+    """Generates an interactive Vega-Lite JSON visualization specification for modern web frontends and dashboards.
+    Call this tool ONCE when an analytical visualization, trend chart, or comparison plot is requested.
 
     Args:
         chart_type: Type of chart: 'bar', 'horizontal_bar', 'line', 'area', 'pie'.
@@ -659,7 +658,7 @@ def generate_data_chart(
         color: Primary accent hex color (default: '#1a73e8').
 
     Returns:
-        Dictionary containing markdown_image (compact base64 Data URI string) and chart status.
+        Dictionary containing vega_lite_spec (dict) and vega_lite_json (formatted JSON string) for interactive rendering.
     """
     try:
         import matplotlib
@@ -763,22 +762,65 @@ def generate_data_chart(
     for spine in ["bottom", "left"]:
         ax.spines[spine].set_color("#dadce0")
 
-    plt.tight_layout()
+    # Construct official interactive Vega-Lite v5 JSON specification
+    vl_data = [{"category": str(x), "value": float(y)} for x, y in zip(x_clean, y_clean)]
+    mark_type = "bar"
+    if chart_type_lower in ("line",):
+        mark_type = "line"
+    elif chart_type_lower in ("area",):
+        mark_type = "area"
+    elif chart_type_lower in ("pie",):
+        mark_type = "arc"
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", dpi=72)
-    plt.close(fig)
-    buf.seek(0)
-    b64_data = base64.b64encode(buf.read()).decode("utf-8")
-    markdown_img = f"![{title}](data:image/png;base64,{b64_data})"
+    vega_lite_spec: Dict[str, Any] = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "description": title,
+        "title": {
+            "text": title,
+            "anchor": "start",
+            "fontSize": 14,
+            "color": "#202124",
+        },
+        "width": "container",
+        "height": 280,
+        "data": {"values": vl_data},
+        "mark": {"type": mark_type, "tooltip": True, "color": color},
+        "encoding": {
+            "x": {
+                "field": "category",
+                "type": "nominal",
+                "title": x_label or "Category",
+                "axis": {"labelAngle": -30, "labelLimit": 120},
+            },
+            "y": {
+                "field": "value",
+                "type": "quantitative",
+                "title": y_label or "Value",
+            },
+        },
+    }
+
+    if chart_type_lower in ("horizontal_bar", "hbar"):
+        vega_lite_spec["encoding"]["x"], vega_lite_spec["encoding"]["y"] = (
+            vega_lite_spec["encoding"]["y"],
+            vega_lite_spec["encoding"]["x"],
+        )
+    elif chart_type_lower == "pie":
+        vega_lite_spec["encoding"] = {
+            "theta": {"field": "value", "type": "quantitative", "stack": True},
+            "color": {"field": "category", "type": "nominal", "title": x_label or "Category"},
+        }
+
+    vega_lite_json_str = json.dumps(vega_lite_spec, indent=2)
 
     return {
         "status": "success",
         "chart_type": chart_type,
         "title": title,
         "data_points_count": len(x_clean),
-        "chart_summary": f"Generated {chart_type} chart for '{title}' with {len(x_clean)} data points.",
-        "markdown_image": markdown_img,
+        "chart_summary": f"Generated interactive Vega-Lite specification for '{title}' with {len(x_clean)} data points.",
+        "vega_lite_spec": vega_lite_spec,
+        "vega_lite_json": vega_lite_json_str,
     }
 
 

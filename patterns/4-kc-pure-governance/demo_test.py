@@ -119,9 +119,9 @@ async def run_verification():
     )
     print(f" 6. PII compliance (email protected):    {'PASSED' if pii_enforced else 'FAILED'}")
 
-    # 7. Visual chart generation
-    generated_chart = any("generate_data_chart" in tc[0] for tc in tool_calls) or "data:image/png;base64" in full_response
-    print(f" 7. Generates visual chart:               {'PASSED' if generated_chart else 'FAILED'}")
+    # 7. Visual chart generation (Interactive Vega-Lite)
+    generated_chart = any("generate_data_chart" in tc[0] for tc in tool_calls) or "vega-lite" in full_response.lower() or "data:image/png;base64" in full_response
+    print(f" 7. Generates visual chart (Vega-Lite):   {'PASSED' if generated_chart else 'FAILED'}")
 
     all_passed = has_plan and searched_catalog and inspected_metadata and used_datetime and executed_sql and pii_enforced
     print("\nOVERALL TEST RESULT:", "SUCCESS" if all_passed else "PARTIAL / NEEDS REVIEW")
