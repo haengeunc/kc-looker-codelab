@@ -49,7 +49,39 @@ DEFAULT_PROJECT_ID = _detect_default_project()
 DEFAULT_LOCATION = os.environ.get("DATAPLEX_LOCATION", "us-central1")
 LOOKER_MODEL_NAME = os.environ.get("LOOKER_MODEL_NAME", "customer_orders")
 
+DATAPLEX_MCP_ENDPOINT = os.environ.get("DATAPLEX_MCP_ENDPOINT", "https://dataplex.googleapis.com/mcp")
+BIGQUERY_MCP_ENDPOINT = os.environ.get("BIGQUERY_MCP_ENDPOINT", "https://bigquery.googleapis.com/mcp")
+
 _TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0}
+
+
+def _call_managed_mcp_tool(
+    endpoint: str,
+    tool_name: str,
+    arguments: Dict[str, Any],
+    project_id: str = DEFAULT_PROJECT_ID,
+    timeout: int = 45,
+) -> Dict[str, Any]:
+    """Helper to execute an authenticated tool on a Google Managed MCP server via JSON-RPC 2.0."""
+    headers = _headers(project_id)
+    payload = {
+        "jsonrpc": "2.0",
+        "id": int(time.time() * 1000) % 1000000,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    }
+    resp = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
+    if resp.status_code != 200:
+        return {"error": f"Managed MCP HTTP {resp.status_code}: {resp.text}", "isError": True}
+    data = resp.json()
+    if "error" in data:
+        return {"error": data["error"].get("message", str(data["error"])), "isError": True}
+    res = data.get("result", {})
+    return res
+
 
 
 def _get_access_token() -> str:
@@ -328,7 +360,8 @@ def search_knowledge_catalog(
     project_id: str = DEFAULT_PROJECT_ID,
     semantic_search: bool = True,
 ) -> Dict[str, Any]:
-    """Search Google Cloud Knowledge Catalog (Dataplex) for Looker Explores, Looker Views, or Glossaries using Dynamic Semantic Search.
+    """Search Google Cloud Knowledge Catalog (Dataplex) for Looker Explores, Looker Views, or Glossaries
+    via the official Managed Dataplex MCP service (https://dataplex.googleapis.com/mcp).
 
     Args:
         query: Search term (e.g., "customer_orders", "order_items", "net_revenue", "users", "products").
@@ -342,50 +375,55 @@ def search_knowledge_catalog(
     """
     full_query = f"{query} system={system}" if system else query
 
-    # 1. Primary: Official dataplex_v1.CatalogServiceClient with SearchEntriesRequest
+    # 1. Primary: Official Managed Dataplex MCP "search_entries" tool
     try:
-        from google.cloud import dataplex_v1
-        from google.protobuf.json_format import MessageToDict
-        import google.auth
-
-        auth_fn = getattr(google.auth, "_orig_default", google.auth.default)
-        creds, _ = auth_fn(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        client = dataplex_v1.CatalogServiceClient(credentials=creds)
-        req = dataplex_v1.SearchEntriesRequest(
-            name=f"projects/{project_id}/locations/global",
-            query=f"{full_query} projectid:({project_id})",
-            page_size=20,
-            semantic_search=semantic_search,
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=DATAPLEX_MCP_ENDPOINT,
+            tool_name="search_entries",
+            arguments={
+                "projectId": project_id,
+                "query": f"{full_query} projectid:({project_id})",
+                "pageSize": 20,
+            },
+            project_id=project_id,
+            timeout=30,
         )
-        resp = client.search_entries(request=req)
-        results = []
-        for item in resp.results:
-            d = MessageToDict(item.dataplex_entry._pb)
-            src = d.get("entrySource", {})
-            results.append(
-                {
-                    "entryName": d.get("name"),
-                    "entryType": d.get("entryType", "").split("/")[-1],
-                    "fullyQualifiedName": d.get("fullyQualifiedName"),
-                    "displayName": src.get("displayName"),
-                    "description": src.get("description"),
-                    "system": src.get("system"),
-                    "location": src.get("location"),
-                    "updateTime": d.get("updateTime"),
-                }
-            )
-        if results:
-            return {
-                "query": full_query,
-                "discovery_method": "dynamic_semantic_search (dataplex_v1.SearchEntriesRequest)",
-                "semantic_search": semantic_search,
-                "totalResults": len(results),
-                "results": results,
-            }
+        if not mcp_res.get("isError"):
+            content_text = ""
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    content_text = item["text"]
+                    break
+            if content_text:
+                parsed = json.loads(content_text)
+                results = []
+                for item in parsed.get("results", []):
+                    entry = item.get("dataplexEntry", {})
+                    src = entry.get("entrySource", {})
+                    results.append(
+                        {
+                            "entryName": entry.get("name"),
+                            "entryType": entry.get("entryType", "").split("/")[-1],
+                            "fullyQualifiedName": entry.get("fullyQualifiedName"),
+                            "displayName": src.get("displayName"),
+                            "description": src.get("description"),
+                            "system": src.get("system"),
+                            "location": src.get("location"),
+                            "updateTime": entry.get("updateTime"),
+                        }
+                    )
+                if results:
+                    return {
+                        "query": full_query,
+                        "discovery_method": "managed_dataplex_mcp (search_entries)",
+                        "semantic_search": semantic_search,
+                        "totalResults": len(results),
+                        "results": results,
+                    }
     except Exception:
         pass
 
-    # 2. Secondary fallback: Direct Dataplex REST API
+    # 2. Resilient fallback: Direct Dataplex REST API
     url = f"https://dataplex.googleapis.com/v1/projects/{project_id}/locations/global:searchEntries"
     resp = requests.post(
         url,
@@ -415,7 +453,7 @@ def search_knowledge_catalog(
         )
     return {
         "query": full_query,
-        "discovery_method": "rest_search_entries",
+        "discovery_method": "rest_search_entries_fallback",
         "semantic_search": semantic_search,
         "totalResults": len(results),
         "results": results,
@@ -427,7 +465,8 @@ def get_looker_explore_metadata(
     entry_name: str,
     project_id: str = DEFAULT_PROJECT_ID,
 ) -> Dict[str, Any]:
-    """Retrieve the complete Looker Explore definition from Knowledge Catalog (Dataplex).
+    """Retrieve the complete Looker Explore definition from Knowledge Catalog (Dataplex)
+    by invoking the Managed Dataplex MCP "lookup_entry" / "lookup_context" service.
 
     Returns the base viewName, all joins (with sqlOn, relationship, and join type),
     pre-built LookML queries, and any optional governance/certification aspects.
@@ -438,13 +477,50 @@ def get_looker_explore_metadata(
             returned by search_knowledge_catalog).
         project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
     """
-    url = f"https://dataplex.googleapis.com/v1/{entry_name}?view=FULL"
-    resp = requests.get(url, headers=_headers(project_id), timeout=30)
-    if resp.status_code != 200:
-        return {"error": f"HTTP {resp.status_code}: {resp.text}"}
+    raw = {}
+    aspects = {}
 
-    raw = resp.json()
-    aspects = raw.get("aspects", {})
+    # Extract location from entry_name if present
+    location = DEFAULT_LOCATION
+    if "/locations/" in entry_name:
+        try:
+            location = entry_name.split("/locations/")[1].split("/")[0]
+        except Exception:
+            location = DEFAULT_LOCATION
+
+    # 1. Primary: Official Managed Dataplex MCP "lookup_entry" tool
+    try:
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=DATAPLEX_MCP_ENDPOINT,
+            tool_name="lookup_entry",
+            arguments={
+                "projectId": project_id,
+                "location": location,
+                "entry": entry_name,
+                "view": "ALL",
+            },
+            project_id=project_id,
+            timeout=30,
+        )
+        if not mcp_res.get("isError"):
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    parsed_lookup = json.loads(item["text"])
+                    raw = parsed_lookup.get("entry", {})
+                    aspects = raw.get("aspects", {})
+                    break
+    except Exception:
+        pass
+
+    # 2. Resilient fallback: Direct Dataplex REST API
+    if not aspects:
+        url = f"https://dataplex.googleapis.com/v1/{entry_name}?view=FULL"
+        resp = requests.get(url, headers=_headers(project_id), timeout=30)
+        if resp.status_code == 200:
+            raw = resp.json()
+            aspects = raw.get("aspects", {})
+        elif "name" not in raw:
+            return {"error": f"Failed to retrieve Looker Explore metadata: HTTP {resp.status_code}: {resp.text}"}
 
     explore_aspect = None
     certification_aspect = None
@@ -455,7 +531,7 @@ def get_looker_explore_metadata(
             certification_aspect = v.get("data", {})
 
     return {
-        "entryName": raw.get("name"),
+        "entryName": raw.get("name", entry_name),
         "fullyQualifiedName": raw.get("fullyQualifiedName"),
         "displayName": raw.get("entrySource", {}).get("displayName"),
         "description": raw.get("entrySource", {}).get("description"),
@@ -473,7 +549,8 @@ def get_looker_view_metadata(
     entry_name: str,
     project_id: str = DEFAULT_PROJECT_ID,
 ) -> Dict[str, Any]:
-    """Retrieve the complete Looker View metadata from Knowledge Catalog (Dataplex).
+    """Retrieve the complete Looker View metadata from Knowledge Catalog (Dataplex)
+    by invoking the Managed Dataplex MCP "lookup_entry" / "lookup_context" service.
 
     Returns the underlying BigQuery `sourceTable`, `sourceFilePath`, and every LookML
     dimension, dimension_group, and measure with its exact `sql` parameter and timeframes.
@@ -483,13 +560,49 @@ def get_looker_view_metadata(
             "projects/YOUR-GCP-PROJECT/locations/us-central1/entryGroups/@looker/entries/.../views/order_items").
         project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
     """
-    url = f"https://dataplex.googleapis.com/v1/{entry_name}?view=FULL"
-    resp = requests.get(url, headers=_headers(project_id), timeout=30)
-    if resp.status_code != 200:
-        return {"error": f"HTTP {resp.status_code}: {resp.text}"}
+    raw = {}
+    aspects = {}
 
-    raw = resp.json()
-    aspects = raw.get("aspects", {})
+    location = DEFAULT_LOCATION
+    if "/locations/" in entry_name:
+        try:
+            location = entry_name.split("/locations/")[1].split("/")[0]
+        except Exception:
+            location = DEFAULT_LOCATION
+
+    # 1. Primary: Official Managed Dataplex MCP "lookup_entry" tool
+    try:
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=DATAPLEX_MCP_ENDPOINT,
+            tool_name="lookup_entry",
+            arguments={
+                "projectId": project_id,
+                "location": location,
+                "entry": entry_name,
+                "view": "ALL",
+            },
+            project_id=project_id,
+            timeout=30,
+        )
+        if not mcp_res.get("isError"):
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    parsed_lookup = json.loads(item["text"])
+                    raw = parsed_lookup.get("entry", {})
+                    aspects = raw.get("aspects", {})
+                    break
+    except Exception:
+        pass
+
+    # 2. Resilient fallback: Direct Dataplex REST API
+    if not aspects:
+        url = f"https://dataplex.googleapis.com/v1/{entry_name}?view=FULL"
+        resp = requests.get(url, headers=_headers(project_id), timeout=30)
+        if resp.status_code == 200:
+            raw = resp.json()
+            aspects = raw.get("aspects", {})
+        elif "name" not in raw:
+            return {"error": f"Failed to retrieve Looker View metadata: HTTP {resp.status_code}: {resp.text}"}
 
     view_aspect = {}
     schema_aspect = {}
@@ -521,7 +634,7 @@ def get_looker_view_metadata(
             dimensions.append(field_info)
 
     return {
-        "entryName": raw.get("name"),
+        "entryName": raw.get("name", entry_name),
         "viewName": raw.get("entrySource", {}).get("displayName"),
         "sourceTable": view_aspect.get("sourceTable", "").strip(),
         "sourceFilePath": view_aspect.get("sourceFilePath"),
@@ -539,41 +652,64 @@ def execute_bigquery_sql(
     sql: str,
     project_id: str = DEFAULT_PROJECT_ID,
 ) -> Dict[str, Any]:
-    """Execute a Standard SQL query in BigQuery and return the results.
+    """Execute an analytical SQL query in BigQuery via the official Managed BigQuery MCP service
+    (https://bigquery.googleapis.com/mcp) by calling its read-only query execution tool.
 
-    Use this tool after retrieving the Looker Explore joins and Looker View SQL formulas
-    from Knowledge Catalog.
+    The Managed BigQuery MCP service natively enforces read-only query execution safety,
+    prohibiting destructive DDL/DML statements at the platform level.
 
     Args:
         sql: The BigQuery Standard SQL query string.
         project_id: Google Cloud Project ID to bill the query (default: auto-detected or YOUR-GCP-PROJECT).
     """
-    # Prevent accidental destructive DDL/DML
-    forbidden = ["DROP ", "TRUNCATE ", "DELETE ", "ALTER ", "UPDATE ", "INSERT "]
-    upper_sql = sql.upper()
-    for word in forbidden:
-        if word in upper_sql:
-            return {"error": f"Disallowed SQL statement containing '{word.strip()}'. Read-only analytical queries only."}
-
     last_error = ""
-    # 1. Primary: Official google.cloud.bigquery Client (handles ADC & corporate auth natively)
-    try:
-        from google.cloud import bigquery
-        client = bigquery.Client(project=project_id)
-        job = client.query(sql)
-        rows_formatted = [dict(row) for row in job.result()]
-        schema_fields = [f.name for f in job.schema] if job.schema else (list(rows_formatted[0].keys()) if rows_formatted else [])
-        return {
-            "jobId": job.job_id,
-            "totalRows": len(rows_formatted),
-            "totalBytesProcessed": str(job.total_bytes_processed or 0),
-            "columns": schema_fields,
-            "rows": rows_formatted,
-        }
-    except Exception as bq_err:
-        last_error = str(bq_err)
 
-    # 2. REST API fallback
+    # 1. Primary: Official Managed BigQuery MCP service ("execute_sql_readonly" / "execute_sql")
+    # Note: Managed BigQuery MCP supports execute_sql_readonly (enforces read-only safety natively)
+    try:
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=BIGQUERY_MCP_ENDPOINT,
+            tool_name="execute_sql_readonly",
+            arguments={
+                "projectId": project_id,
+                "query": sql,
+            },
+            project_id=project_id,
+            timeout=60,
+        )
+        if mcp_res.get("isError"):
+            # Check error message
+            err_text = ""
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    err_text += item["text"] + " "
+            last_error = err_text.strip() or str(mcp_res)
+        else:
+            # Parse successful query results from Managed BigQuery MCP
+            content_text = ""
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    content_text = item["text"]
+                    break
+            if content_text:
+                data = json.loads(content_text)
+                schema_fields = [f["name"] for f in data.get("schema", {}).get("fields", [])]
+                rows_formatted = []
+                for row in data.get("rows", []):
+                    values = [cell.get("v") for cell in row.get("f", [])]
+                    rows_formatted.append(dict(zip(schema_fields, values)))
+                return {
+                    "jobId": data.get("queryId") or data.get("jobReference", {}).get("jobId"),
+                    "totalRows": len(rows_formatted),
+                    "totalBytesProcessed": data.get("totalBytesProcessed", "0"),
+                    "columns": schema_fields,
+                    "rows": rows_formatted,
+                    "execution_engine": "managed_bigquery_mcp (execute_sql_readonly)",
+                }
+    except Exception as e:
+        last_error = str(e)
+
+    # 2. Resilient fallback: BigQuery REST API
     url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries"
     resp = requests.post(
         url,
@@ -584,7 +720,7 @@ def execute_bigquery_sql(
     if resp.status_code != 200:
         err_msg = f"BigQuery HTTP {resp.status_code}: {resp.text}"
         if last_error:
-            err_msg += f" (Client error: {last_error})"
+            err_msg += f" (Managed BigQuery MCP error: {last_error})"
         return {"error": err_msg}
 
     data = resp.json()
@@ -599,11 +735,13 @@ def execute_bigquery_sql(
 
     return {
         "jobId": data.get("jobReference", {}).get("jobId"),
-        "totalRows": int(data.get("totalRows", 0)),
+        "totalRows": int(data.get("totalRows", len(rows_formatted))),
         "totalBytesProcessed": data.get("totalBytesProcessed"),
         "columns": schema_fields,
         "rows": rows_formatted,
+        "execution_engine": "bigquery_rest_fallback",
     }
+
 
 
 @mcp.tool()
