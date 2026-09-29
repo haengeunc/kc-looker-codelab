@@ -33,7 +33,7 @@ This repository demonstrates three evolving architectural patterns for AI data a
 | **LLM Query Role** | **Ungoverned SQL Generator** | **Grounded SQL Compiler** | **Deterministic Intent Resolver** (Zero SQL) |
 | **Knowledge Catalog** | None | Schema, Joins & LookML formulas | PII Tags, Certification & Glossary |
 | **Unstructured Grounding** | None | Corporate Policy PDF (GCS) | Corporate Policy PDF (GCS) |
-| **Visualizations** | None | Native Mermaid (`xychart-beta`, `pie`) | **Interactive Looker Visualizations** (`looker_share_url`) |
+| **Visualizations** | None | **Interactive Vega-Lite JSON** + Native Mermaid | **Interactive Looker Visualizations** (`looker_share_url`) |
 | **Model** | `gemini-2.5-flash` | `gemini-2.5-flash` | `gemini-2.5-flash` |
 | **Metric Consistency** | ❌ Hallucination Risk | ⚠️ Grounded in LookML formulas | 🟢 **100% Dashboard Consistency** |
 | **PII Data Leakage** | ❌ High risk (Raw columns) | 🟢 **Blocked** via Dataplex tags | 🟢 **Blocked** via pre-exec guardrail |

@@ -692,6 +692,253 @@ def read_gcs_policy_document(
 
 
 @mcp.tool()
+def generate_vega_lite_chart(
+    chart_type: str,
+    title: str,
+    data_records: List[Dict[str, Any]],
+    x_field: str,
+    y_field: str,
+    x_title: str = "",
+    y_title: str = "",
+    color_field: str = "",
+    sort_by: str = "",
+) -> Dict[str, Any]:
+    """Generates an executive-ready, interactive Vega-Lite JSON visualization specification.
+
+    Follows the Google Cloud Conversational Analytics API visualization standards
+    (Area, Bar, Heatmap, Line, Pie, Scatter).
+
+    Args:
+        chart_type: Type of chart: 'bar', 'horizontal_bar', 'line', 'area', 'pie', 'scatter', 'heatmap'.
+        title: Title of the visualization.
+        data_records: List of data row dictionaries (e.g. [{"country": "USA", "net_revenue": 150000}, ...]).
+        x_field: Name of the field for the X-axis (or category/nominal/temporal field).
+        y_field: Name of the field for the Y-axis (or quantitative measure).
+        x_title: Optional custom display title for X-axis.
+        y_title: Optional custom display title for Y-axis.
+        color_field: Optional field name to partition or color by.
+        sort_by: Optional sort order for categories (e.g. '-y' for descending by value, 'ascending', 'descending').
+
+    Returns:
+        Dictionary containing vega_config (Vega-Lite v5 JSON object), chart_type, and vega_lite_json string.
+    """
+    if not data_records:
+        return {"error": "data_records must not be empty."}
+
+    chart_type_lower = chart_type.lower().strip()
+
+    # Determine data types for x and y
+    sample_y = next((r.get(y_field) for r in data_records if r.get(y_field) is not None), None)
+    is_y_num = isinstance(sample_y, (int, float))
+
+    sample_x = next((r.get(x_field) for r in data_records if r.get(x_field) is not None), None)
+    x_type = "nominal"
+    if isinstance(sample_x, (int, float)):
+        x_type = "quantitative"
+    elif isinstance(sample_x, str) and any(sep in sample_x for sep in ["-", "/"]) and any(c.isdigit() for c in sample_x):
+        # Likely a date/time string
+        x_type = "temporal"
+
+    # Base Vega-Lite spec adhering to Google Cloud Conversational Analytics API standards
+    spec: Dict[str, Any] = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "description": f"Enterprise Data Analytics Visualization: {title}",
+        "title": {
+            "text": title,
+            "anchor": "start",
+            "fontSize": 14,
+            "fontWeight": "bold",
+            "color": "#202124",
+            "offset": 12,
+        },
+        "width": "container",
+        "height": 300,
+        "data": {
+            "values": data_records
+        },
+    }
+
+    x_enc: Dict[str, Any] = {
+        "field": x_field,
+        "type": x_type,
+        "title": x_title or x_field.replace("_", " ").title(),
+        "axis": {
+            "labelColor": "#5f6368",
+            "titleColor": "#202124",
+            "grid": False,
+            "labelAngle": -25 if x_type == "nominal" else 0,
+        },
+    }
+    if sort_by:
+        x_enc["sort"] = sort_by
+
+    y_enc: Dict[str, Any] = {
+        "field": y_field,
+        "type": "quantitative" if is_y_num else "nominal",
+        "title": y_title or y_field.replace("_", " ").title(),
+        "axis": {
+            "labelColor": "#5f6368",
+            "titleColor": "#202124",
+            "grid": True,
+            "gridColor": "#f1f3f4",
+            "format": "~s" if is_y_num else None,
+        },
+    }
+
+    if chart_type_lower in ("bar", "column"):
+        spec["mark"] = {
+            "type": "bar",
+            "cornerRadiusEnd": 3,
+            "color": "#1a73e8",
+            "tooltip": True,
+        }
+        spec["encoding"] = {
+            "x": x_enc,
+            "y": y_enc,
+            "tooltip": [
+                {"field": x_field, "type": x_type, "title": x_title or x_field.replace("_", " ").title()},
+                {"field": y_field, "type": "quantitative", "title": y_title or y_field.replace("_", " ").title(), "format": ",.2f" if is_y_num else None},
+            ],
+        }
+        if color_field:
+            spec["encoding"]["color"] = {"field": color_field, "type": "nominal"}
+
+    elif chart_type_lower in ("horizontal_bar", "hbar"):
+        spec["mark"] = {
+            "type": "bar",
+            "cornerRadiusEnd": 3,
+            "color": "#1a73e8",
+            "tooltip": True,
+        }
+        y_enc["axis"]["grid"] = False
+        x_enc["axis"]["grid"] = True
+        x_enc["axis"]["gridColor"] = "#f1f3f4"
+        spec["encoding"] = {
+            "y": {**x_enc, "sort": sort_by or "-x"},
+            "x": y_enc,
+            "tooltip": [
+                {"field": x_field, "type": x_type, "title": x_title or x_field.replace("_", " ").title()},
+                {"field": y_field, "type": "quantitative", "title": y_title or y_field.replace("_", " ").title(), "format": ",.2f" if is_y_num else None},
+            ],
+        }
+        if color_field:
+            spec["encoding"]["color"] = {"field": color_field, "type": "nominal"}
+
+    elif chart_type_lower in ("line", "timeseries"):
+        spec["mark"] = {
+            "type": "line",
+            "point": {"filled": True, "size": 60, "color": "#1a73e8"},
+            "color": "#1a73e8",
+            "strokeWidth": 2.5,
+            "tooltip": True,
+        }
+        spec["encoding"] = {
+            "x": x_enc,
+            "y": y_enc,
+            "tooltip": [
+                {"field": x_field, "type": x_type, "title": x_title or x_field.replace("_", " ").title()},
+                {"field": y_field, "type": "quantitative", "title": y_title or y_field.replace("_", " ").title(), "format": ",.2f" if is_y_num else None},
+            ],
+        }
+        if color_field:
+            spec["encoding"]["color"] = {"field": color_field, "type": "nominal"}
+
+    elif chart_type_lower in ("area",):
+        spec["mark"] = {
+            "type": "area",
+            "line": {"color": "#1a73e8", "strokeWidth": 2},
+            "color": {
+                "x1": 1, "y1": 1, "x2": 1, "y2": 0,
+                "gradient": "linear",
+                "stops": [
+                    {"offset": 0, "color": "white"},
+                    {"offset": 1, "color": "#1a73e8"}
+                ]
+            },
+            "opacity": 0.6,
+            "tooltip": True,
+        }
+        spec["encoding"] = {
+            "x": x_enc,
+            "y": y_enc,
+            "tooltip": [
+                {"field": x_field, "type": x_type, "title": x_title or x_field.replace("_", " ").title()},
+                {"field": y_field, "type": "quantitative", "title": y_title or y_field.replace("_", " ").title(), "format": ",.2f" if is_y_num else None},
+            ],
+        }
+
+    elif chart_type_lower in ("pie", "donut"):
+        spec["mark"] = {
+            "type": "arc",
+            "innerRadius": 40 if chart_type_lower == "donut" else 0,
+            "tooltip": True,
+        }
+        spec["encoding"] = {
+            "theta": {"field": y_field, "type": "quantitative", "stack": True},
+            "color": {
+                "field": x_field,
+                "type": "nominal",
+                "scale": {"scheme": "tableau10"},
+                "legend": {"title": x_title or x_field.replace("_", " ").title(), "orient": "right"},
+            },
+            "tooltip": [
+                {"field": x_field, "type": "nominal", "title": x_title or x_field.replace("_", " ").title()},
+                {"field": y_field, "type": "quantitative", "title": y_title or y_field.replace("_", " ").title(), "format": ",.2f" if is_y_num else None},
+            ],
+        }
+
+    elif chart_type_lower in ("scatter",):
+        spec["mark"] = {
+            "type": "circle",
+            "size": 80,
+            "color": "#1a73e8",
+            "opacity": 0.8,
+            "tooltip": True,
+        }
+        spec["encoding"] = {
+            "x": x_enc,
+            "y": y_enc,
+            "tooltip": [
+                {"field": x_field, "type": x_type, "title": x_title or x_field.replace("_", " ").title()},
+                {"field": y_field, "type": "quantitative", "title": y_title or y_field.replace("_", " ").title(), "format": ",.2f" if is_y_num else None},
+            ],
+        }
+        if color_field:
+            spec["encoding"]["color"] = {"field": color_field, "type": "nominal"}
+
+    elif chart_type_lower in ("heatmap",):
+        spec["mark"] = {"type": "rect", "tooltip": True}
+        spec["encoding"] = {
+            "x": x_enc,
+            "y": {"field": color_field or y_field, "type": "nominal", "title": color_field or y_field},
+            "color": {
+                "field": y_field,
+                "type": "quantitative",
+                "scale": {"scheme": "blues"},
+                "title": y_title or y_field,
+            },
+            "tooltip": [
+                {"field": x_field, "type": x_type},
+                {"field": color_field or y_field, "type": "nominal"},
+                {"field": y_field, "type": "quantitative", "format": ",.2f" if is_y_num else None},
+            ],
+        }
+
+    else:
+        # Default fallback to bar chart
+        spec["mark"] = {"type": "bar", "color": "#1a73e8", "tooltip": True}
+        spec["encoding"] = {"x": x_enc, "y": y_enc}
+
+    return {
+        "status": "success",
+        "chart_type": chart_type,
+        "title": title,
+        "vega_config": spec,
+        "vega_lite_json": json.dumps(spec, indent=2),
+    }
+
+
+@mcp.tool()
 def generate_data_chart(
     chart_type: str,
     title: str,

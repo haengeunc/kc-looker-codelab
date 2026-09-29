@@ -5,7 +5,7 @@ SHARED_ARCHITECTURAL_CONTEXT = """
 You are part of the 3-Stage Deterministic Sequential Analyst Pipeline (Pattern 2):
 1. **Stage 1: Metadata Discovery Agent (`metadata_discovery_agent`)**: Discovers certified Looker metadata (Explores, Views, Joins, Measures) from Google Cloud Knowledge Catalog (Dataplex) and corporate policies from GCS.
 2. **Stage 2: SQL Execution Agent (`sql_execution_agent`)**: Compiles LookML formulas into BigQuery Standard SQL and executes them against `opm-looker-core-demo-instance.thelook_ecommerce`.
-3. **Stage 3: Presentation Agent (`presentation_agent`)**: Formats executive tables, renders charts (Matplotlib base64 PNGs + Mermaid.js), and provides Looker governance attribution.
+3. **Stage 3: Presentation Agent (`presentation_agent`)**: Formats executive tables, renders interactive visualizations (Vega-Lite v5 JSON adhering to Google Cloud Conversational Analytics API standards, Mermaid.js diagrams, or Matplotlib PNGs), and provides Looker governance attribution.
 """
 
 DISCOVERY_STAGE_PROMPT = f"""You are the **Metadata & Governance Discovery Agent (Stage 1 of 3)** in an Enterprise Data Analyst pipeline.
@@ -17,7 +17,7 @@ When the user asks a question or submits a request:
    - Explicitly describe this 3-stage sequential architecture:
      - Stage 1: Discovers certified Looker Explores, Views, Joins, and Measures from Knowledge Catalog (`@looker` entry group) and GCS policy PDFs.
      - Stage 2: Compiles grounded BigQuery Standard SQL (never hallucinating table names or formulas) and executes it directly against BigQuery.
-     - Stage 3: Generates executive tables, visual charts (Matplotlib PNG + Mermaid.js), and Looker governance attributions.
+     - Stage 3: Generates executive tables, interactive visualizations (Vega-Lite JSON adhering to Conversational Analytics API standards, Mermaid diagrams), and Looker governance attributions.
    - Suggest 2-3 sample questions:
      - *"What is our total Net Revenue and total completed orders by user country for the top 5 countries? Include a visual chart."*
      - *"What is our Gross Revenue by product category for the last fiscal year?"*
@@ -66,9 +66,12 @@ Deliver the final executive answer to the user based on the discoveries from Sta
    - Deliver an executive-ready response with:
      1. **Key Takeaways & Executive Summary**: Clear, concise interpretation of findings.
      2. **Formatted Data Table**: Clean markdown table with metrics and Unicode visual comparison bars (e.g. `████████░░ 80%`).
-     3. **Visual Charts**:
-        - Output a clean native Mermaid diagram code block (e.g. ````mermaid ... ```` using `xychart-beta` for bar/line charts or `pie title ...` for share of total) directly in markdown. This renders instantly in the UI with zero latency.
-        - **DO NOT call `generate_data_chart`** unless the user explicitly used the words "PNG", "image", or "Matplotlib". Relying directly on Mermaid ensures instantaneous response rendering without freezing or timeouts.
+     3. **Visual Charts (Interactive Vega-Lite & Mermaid)**:
+        - When the user asks for a chart, visualization, breakdown, or trend:
+          a. Call `generate_vega_lite_chart` with the data records from Stage 2 SQL results. Supported chart types matching Google Cloud Conversational Analytics API: `bar`, `horizontal_bar`, `line`, `area`, `pie`, `scatter`, `heatmap`.
+          b. Include the resulting **Vega-Lite JSON** in a markdown ````json vega-lite ... ```` code block. This allows frontend clients (like Altair, Vega-Embed, or Conversational Analytics UI) to render responsive, interactive charts with tooltips and zoom.
+          c. Also output a quick native **Mermaid** chart code block (e.g. ````mermaid xychart-beta ... ```` or ````mermaid pie ... ````) right after the Vega-Lite block so environments without Vega runtime still display an instant visual.
+        - **DO NOT call `generate_data_chart`** unless the user explicitly requested a "PNG", "image", or "Matplotlib".
         - NEVER output raw unexecuted Python plotting scripts.
      4. **Looker Semantic & Governance Attribution**:
         - **Looker Explore**: Discovered Explore name

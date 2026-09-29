@@ -17,6 +17,7 @@ from kc_analyst_agent.kc_bq_mcp_server import (
     read_gcs_policy_document,
     execute_bigquery_sql,
     generate_data_chart,
+    generate_vega_lite_chart,
 )
 from kc_analyst_agent.prompt import (
     DISCOVERY_STAGE_PROMPT,
@@ -113,9 +114,10 @@ sql_execution_agent = LlmAgent(
 presentation_agent = LlmAgent(
     model=DEFAULT_MODEL,
     name="presentation_agent",
-    description="Formats executive answers, renders data charts (Matplotlib PNG + Mermaid), and attributes Looker governance.",
+    description="Formats executive answers, renders data visualizations (interactive Vega-Lite JSON, Mermaid.js, Matplotlib PNG), and attributes Looker governance.",
     instruction=PRESENTATION_STAGE_PROMPT,
     tools=[
+        generate_vega_lite_chart,
         generate_data_chart,
     ],
 )
