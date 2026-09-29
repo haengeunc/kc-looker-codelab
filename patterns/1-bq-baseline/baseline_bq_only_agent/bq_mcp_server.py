@@ -188,22 +188,40 @@ def list_datasets(project_id: Optional[str] = None) -> str:
     proj = _normalize_project_id(project_id)
     res = _call_managed_bq_mcp("list_dataset_ids", {"projectId": proj, "pageSize": 50}, project_id=proj)
 
-    if "error" in res:
-        return json.dumps({"error": res["error"]})
+    if "error" not in res:
+        raw_datasets = res.get("datasets", [])
+        datasets = []
+        for d in raw_datasets:
+            did = d.get("id", "")
+            if ":" in did:
+                did = did.split(":")[-1]
+            datasets.append(did)
 
-    raw_datasets = res.get("datasets", [])
-    datasets = []
-    for d in raw_datasets:
-        did = d.get("id", "")
-        if ":" in did:
-            did = did.split(":")[-1]
-        datasets.append(did)
+        return json.dumps({
+            "project": proj,
+            "datasets": datasets,
+            "source": "https://bigquery.googleapis.com/mcp (list_dataset_ids)",
+        }, indent=2)
 
-    return json.dumps({
-        "project": proj,
-        "datasets": datasets,
-        "source": "https://bigquery.googleapis.com/mcp (list_dataset_ids)",
-    }, indent=2)
+    # Resilient fallback: BigQuery REST API
+    token = _get_auth_token()
+    headers = {"Content-Type": "application/json", "X-Goog-User-Project": proj}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/datasets?maxResults=50"
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            d_list = [d.get("datasetReference", {}).get("datasetId") for d in resp.json().get("datasets", [])]
+            return json.dumps({
+                "project": proj,
+                "datasets": d_list,
+                "source": "bigquery_rest_fallback",
+            }, indent=2)
+    except Exception:
+        pass
+
+    return json.dumps({"error": res["error"]})
 
 
 @mcp.tool()
@@ -221,25 +239,44 @@ def list_tables(dataset_id: str = "thelook_ecommerce", project_id: Optional[str]
         "pageSize": 50,
     }, project_id=proj)
 
-    if "error" in res:
-        return json.dumps({"error": res["error"]})
+    if "error" not in res:
+        raw_tables = res.get("tables", [])
+        tables = []
+        for t in raw_tables:
+            tid = t.get("id", "")
+            if "." in tid:
+                tid = tid.split(".")[-1]
+            elif ":" in tid:
+                tid = tid.split(":")[-1]
+            tables.append(tid)
 
-    raw_tables = res.get("tables", [])
-    tables = []
-    for t in raw_tables:
-        tid = t.get("id", "")
-        if "." in tid:
-            tid = tid.split(".")[-1]
-        elif ":" in tid:
-            tid = tid.split(":")[-1]
-        tables.append(tid)
+        return json.dumps({
+            "project": proj,
+            "dataset": dataset_id,
+            "tables": tables,
+            "source": "https://bigquery.googleapis.com/mcp (list_table_ids)",
+        }, indent=2)
 
-    return json.dumps({
-        "project": proj,
-        "dataset": dataset_id,
-        "tables": tables,
-        "source": "https://bigquery.googleapis.com/mcp (list_table_ids)",
-    }, indent=2)
+    # Resilient fallback: BigQuery REST API
+    token = _get_auth_token()
+    headers = {"Content-Type": "application/json", "X-Goog-User-Project": proj}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/datasets/{dataset_id}/tables?maxResults=50"
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            t_list = [t.get("tableReference", {}).get("tableId") for t in resp.json().get("tables", [])]
+            return json.dumps({
+                "project": proj,
+                "dataset": dataset_id,
+                "tables": t_list,
+                "source": "bigquery_rest_fallback",
+            }, indent=2)
+    except Exception:
+        pass
+
+    return json.dumps({"error": res["error"]})
 
 
 @mcp.tool()
@@ -262,21 +299,45 @@ def get_table_schema(
         "tableId": table_id,
     }, project_id=proj)
 
-    if "error" in res:
-        return json.dumps({"error": res["error"]})
+    if "error" not in res:
+        schema_fields = res.get("schema", {}).get("fields", [])
+        fields = [
+            {"name": f.get("name"), "type": f.get("type"), "mode": f.get("mode", "NULLABLE")}
+            for f in schema_fields
+        ]
 
-    schema_fields = res.get("schema", {}).get("fields", [])
-    fields = [
-        {"name": f.get("name"), "type": f.get("type"), "mode": f.get("mode", "NULLABLE")}
-        for f in schema_fields
-    ]
+        return json.dumps({
+            "table": f"{proj}.{dataset_id}.{table_id}",
+            "columns": fields,
+            "numRows": res.get("numRows"),
+            "source": "https://bigquery.googleapis.com/mcp (get_table_info)",
+        }, indent=2)
 
-    return json.dumps({
-        "table": f"{proj}.{dataset_id}.{table_id}",
-        "columns": fields,
-        "numRows": res.get("numRows"),
-        "source": "https://bigquery.googleapis.com/mcp (get_table_info)",
-    }, indent=2)
+    # Resilient fallback: BigQuery REST API
+    token = _get_auth_token()
+    headers = {"Content-Type": "application/json", "X-Goog-User-Project": proj}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/datasets/{dataset_id}/tables/{table_id}"
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            table_info = resp.json()
+            schema_fields = table_info.get("schema", {}).get("fields", [])
+            fields = [
+                {"name": f.get("name"), "type": f.get("type"), "mode": f.get("mode", "NULLABLE")}
+                for f in schema_fields
+            ]
+            return json.dumps({
+                "table": f"{proj}.{dataset_id}.{table_id}",
+                "columns": fields,
+                "numRows": table_info.get("numRows"),
+                "source": "bigquery_rest_fallback",
+            }, indent=2)
+    except Exception:
+        pass
+
+    return json.dumps({"error": res["error"]})
 
 
 @mcp.tool()
