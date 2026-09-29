@@ -43,10 +43,17 @@ elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
 
+EXTRA_ARGS=()
+if [[ -n "${AGENT_ENGINE_ID:-}" ]]; then
+  EXTRA_ARGS+=("--agent_engine_id=${AGENT_ENGINE_ID}")
+fi
+
 # 3. Deploy via ADK CLI to Vertex AI Agent Engine
 "$ADK_BIN" deploy agent_engine \
   --project="$PROJECT_ID" \
   --region="$REGION" \
   --display_name="$DISPLAY_NAME" \
   --description="Enterprise Data Analyst Agent grounded in Looker semantic metadata from Knowledge Catalog (Dataplex) and BigQuery." \
+  "${EXTRA_ARGS[@]}" \
   "${SCRIPT_DIR}/kc_analyst_agent"
+

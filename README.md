@@ -138,25 +138,26 @@ Anyone in the `google.com` organization can access these URLs directly in their 
 
 
 ### Vertex AI Agent Engine & Gemini Enterprise
-All three agents can be deployed to Vertex AI Agent Engine (Reasoning Engine) and linked directly into Gemini Enterprise:
+All three agents can be deployed to Vertex AI Agent Engine (Reasoning Engine) in your Google Cloud project and linked into Gemini Enterprise:
 
 * **Pattern 1 (`baseline_bq_only_agent`)**:
-  * **Resource**: `projects/234424439374/locations/us-central1/reasoningEngines/8024503590590611456`
-  * **Console Playground**: [Open Agent Engine Playground (Pattern 1)](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/us-central1/agent-engines/8024503590590611456/playground?project=opm-looker-core-demo-instance)
-  * **Deploy Command**: `cd patterns/1-bq-baseline && ./deploy_agent_engine.sh`
+  ```bash
+  cd patterns/1-bq-baseline && ./deploy_agent_engine.sh
+  ```
 
 * **Pattern 2 (`kc_analyst_agent`)**:
-  * **Resource**: `projects/234424439374/locations/us-central1/reasoningEngines/1557334525686579200`
-  * **Console Playground**: [Open Agent Engine Playground (Pattern 2)](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/us-central1/agent-engines/1557334525686579200/playground?project=opm-looker-core-demo-instance)
-  * **Deploy Command**: `cd patterns/2-kc-bq-sql && ./deploy_agent_engine.sh`
+  ```bash
+  cd patterns/2-kc-bq-sql && ./deploy_agent_engine.sh
+  ```
 
 * **Pattern 3 (`looker_governed_kc_agent`)**:
-  * **Resource**: `projects/234424439374/locations/us-central1/reasoningEngines/1416051679563874304`
-  * **Console Playground**: [Open Agent Engine Playground (Pattern 3)](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/us-central1/agent-engines/1416051679563874304/playground?project=opm-looker-core-demo-instance)
-  * **Deploy Command**: `cd patterns/3-kc-looker-intent && ./deploy_agent_engine.sh`
+  ```bash
+  cd patterns/3-kc-looker-intent && ./deploy_agent_engine.sh
+  ```
 
 #### Registering in Gemini Enterprise:
 1. Navigate to **Google Cloud Console** $\to$ **Gemini Enterprise** (or **Agent Studio / Agents**).
 2. Click **Create Agent** / **Add Agent** $\to$ **Custom Agent (Vertex AI Reasoning Engine)**.
-3. Select the desired Reasoning Engine instance (`us-central1`) to surface the agent directly to enterprise business users.
+3. Select your deployed Reasoning Engine instance to surface the agent directly to enterprise business users.
+
 
