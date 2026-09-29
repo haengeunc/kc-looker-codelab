@@ -6,11 +6,12 @@ import google.auth
 from google.oauth2.credentials import Credentials
 
 from baseline_bq_only_agent.bq_mcp_server import (
-    _get_access_token,
+    _get_auth_token,
     list_datasets,
     list_tables,
     get_table_schema,
     execute_bigquery_sql,
+    generate_data_chart,
 )
 from baseline_bq_only_agent.prompt import BASELINE_ANALYST_PROMPT
 
@@ -56,7 +57,7 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
     except Exception:
         pass
     creds = Credentials(
-        token=_get_access_token(),
+        token=_get_auth_token(),
         quota_project_id=quota_project_id or PROJECT_ID,
     )
     return creds, PROJECT_ID
@@ -79,6 +80,6 @@ root_agent = LlmAgent(
         list_tables,
         get_table_schema,
         execute_bigquery_sql,
+        generate_data_chart,
     ],
 )
-
