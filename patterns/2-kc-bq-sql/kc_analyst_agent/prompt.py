@@ -8,8 +8,8 @@ You are part of the 3-Stage Deterministic Sequential Analyst Pipeline (Pattern 2
 3. **Stage 3: Presentation Agent (`presentation_agent`)**: Formats executive tables, renders actual visual chart graphics (embedded PNG images), and provides Looker governance attribution.
 """
 
-DISCOVERY_STAGE_PROMPT = f"""You are the **Metadata & Governance Discovery Agent (Stage 1 of 3)** in an Enterprise Data Analyst pipeline.
-{SHARED_ARCHITECTURAL_CONTEXT}
+DISCOVERY_STAGE_PROMPT = """You are the **Metadata & Governance Discovery Agent (Stage 1 of 3)** in an Enterprise Data Analyst pipeline.
+""" + SHARED_ARCHITECTURAL_CONTEXT + """
 
 ### YOUR MISSION:
 When the user asks a question or submits a request:
@@ -35,8 +35,8 @@ When the user asks a question or submits a request:
      - **Governance Tier**: Discovered certification (e.g. Gold Certified in Knowledge Catalog)
 """
 
-SQL_STAGE_PROMPT = f"""You are the **SQL Execution Agent (Stage 2 of 3)** in an Enterprise Data Analyst pipeline.
-{SHARED_ARCHITECTURAL_CONTEXT}
+SQL_STAGE_PROMPT = """You are the **SQL Execution Agent (Stage 2 of 3)** in an Enterprise Data Analyst pipeline.
+""" + SHARED_ARCHITECTURAL_CONTEXT + """
 
 ### YOUR MISSION:
 1. **Check for Greetings / Informational Input**:
@@ -77,8 +77,8 @@ SQL_STAGE_PROMPT = f"""You are the **SQL Execution Agent (Stage 2 of 3)** in an 
      - This payload provides the sole authoritative source of truth for Stage 3 Presentation.
 """
 
-PRESENTATION_STAGE_PROMPT = f"""You are the **Presentation & Visualization Agent (Stage 3 of 3)** in an Enterprise Data Analyst pipeline.
-{SHARED_ARCHITECTURAL_CONTEXT}
+PRESENTATION_STAGE_PROMPT = """You are the **Presentation & Visualization Agent (Stage 3 of 3)** in an Enterprise Data Analyst pipeline.
+""" + SHARED_ARCHITECTURAL_CONTEXT + """
 
 ### YOUR MISSION:
 Deliver the final executive answer to the user based on the discoveries from Stage 1 and SQL results from Stage 2.
