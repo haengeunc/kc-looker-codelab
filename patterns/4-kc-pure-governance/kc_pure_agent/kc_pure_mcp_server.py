@@ -646,6 +646,8 @@ def generate_data_chart(
     color: str = "#1a73e8",
 ) -> Dict[str, Any]:
     """Render an executive statistical visualization chart as an inline base64 PNG data URI.
+    Call this tool ONCE at the end of your workflow when a visual chart or plot is requested.
+    Do NOT call this tool multiple times.
 
     Args:
         chart_type: Type of chart: 'bar', 'horizontal_bar', 'line', 'area', 'pie'.
@@ -657,7 +659,7 @@ def generate_data_chart(
         color: Primary accent hex color (default: '#1a73e8').
 
     Returns:
-        Dictionary containing markdown_image (base64 Data URI string) to embed directly in Markdown.
+        Dictionary containing markdown_image (compact base64 Data URI string) and chart status.
     """
     try:
         import matplotlib
@@ -678,67 +680,83 @@ def generate_data_chart(
         except (ValueError, TypeError):
             y_clean.append(0.0)
 
-    fig, ax = plt.subplots(figsize=(9, 4.5), dpi=150)
+    fig, ax = plt.subplots(figsize=(6.5, 3.2), dpi=72)
     fig.patch.set_facecolor("#ffffff")
-    ax.set_facecolor("#ffffff")
+    ax.set_facecolor("#fafafa")
 
     chart_type_lower = chart_type.lower().strip()
-    palette = ["#1a73e8", "#12b5cb", "#e37400", "#188038", "#d93025", "#9334e6", "#f2994a"]
+    palette = ["#1a73e8", "#12b5cb", "#e37400", "#d93025", "#1e8e3e", "#9334e6", "#f29900", "#5f6368"]
 
     if chart_type_lower in ("bar", "column"):
-        bars = ax.bar(x_clean, y_clean, color=color, width=0.55, zorder=3)
+        bars = ax.bar(x_clean, y_clean, color=color, width=0.55, edgecolor="none", zorder=3)
         ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
         for bar in bars:
             height = bar.get_height()
             ax.annotate(
                 f"{height:,.0f}" if abs(height) >= 10 else f"{height:,.2f}",
                 xy=(bar.get_x() + bar.get_width() / 2, height),
-                xytext=(0, 4),
+                xytext=(0, 3),
                 textcoords="offset points",
-                ha="center", va="bottom", fontsize=8.5, fontweight="500", color="#202124"
+                ha="center", va="bottom", fontsize=8, color="#202124"
             )
-        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0, ha="right" if any(len(str(s)) > 8 for s in x_clean) else "center")
+        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0, ha="right" if any(len(str(s)) > 8 for s in x_clean) else "center", fontsize=8)
+        plt.yticks(fontsize=8)
     elif chart_type_lower in ("horizontal_bar", "hbar"):
         y_pos = list(range(len(x_clean)))[::-1]
-        bars = ax.barh(y_pos, y_clean, color=color, height=0.55, zorder=3)
+        bars = ax.barh(y_pos, y_clean, color=color, height=0.55, edgecolor="none", zorder=3)
         ax.set_yticks(y_pos)
-        ax.set_yticklabels(x_clean)
+        ax.set_yticklabels(x_clean, fontsize=8)
+        plt.yticks(fontsize=8)
         ax.grid(axis="x", linestyle="--", alpha=0.35, zorder=0)
         for bar in bars:
             width = bar.get_width()
             ax.annotate(
                 f"{width:,.0f}" if abs(width) >= 10 else f"{width:,.2f}",
                 xy=(width, bar.get_y() + bar.get_height() / 2),
-                xytext=(5, 0),
+                xytext=(4, 0),
                 textcoords="offset points",
-                ha="left", va="center", fontsize=8.5, fontweight="500", color="#202124"
+                ha="left", va="center", fontsize=8, color="#202124"
             )
     elif chart_type_lower == "line":
-        ax.plot(x_clean, y_clean, color=color, marker="o", linewidth=2.5, markersize=6, zorder=3)
+        ax.plot(x_clean, y_clean, color=color, marker="o", linewidth=2.0, markersize=5, zorder=3)
         ax.grid(linestyle="--", alpha=0.35, zorder=0)
         for x, y in zip(x_clean, y_clean):
             ax.annotate(
-                f"${y:,.2f}" if y > 100 else f"{y:,.2f}",
+                f"{y:,.0f}" if abs(y) >= 10 else f"{y:,.2f}",
                 xy=(x, y),
-                xytext=(0, 6),
+                xytext=(0, 5),
                 textcoords="offset points",
-                ha="center", va="bottom", fontsize=8.5, fontweight="500"
+                ha="center", va="bottom", fontsize=8
             )
-        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0)
+        plt.xticks(rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0, ha="right" if any(len(str(s)) > 8 for s in x_clean) else "center", fontsize=8)
+        plt.yticks(fontsize=8)
     elif chart_type_lower in ("area",):
         ax.plot(x_clean, y_clean, color=color, linewidth=2, zorder=3)
         ax.fill_between(range(len(x_clean)), y_clean, color=color, alpha=0.35, zorder=2)
         ax.grid(linestyle="--", alpha=0.35, zorder=0)
-        plt.xticks(range(len(x_clean)), x_clean, rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0)
+        plt.xticks(range(len(x_clean)), x_clean, rotation=25 if any(len(str(s)) > 8 for s in x_clean) else 0, ha="right" if any(len(str(s)) > 8 for s in x_clean) else "center", fontsize=8)
+        plt.yticks(fontsize=8)
+    elif chart_type_lower == "pie":
+        colors = palette[:len(x_clean)] if len(x_clean) <= len(palette) else None
+        wedges, texts, autotexts = ax.pie(
+            y_clean, labels=x_clean, autopct="%1.1f%%",
+            startangle=140, colors=colors, textprops=dict(color="#202124", fontsize=8)
+        )
+        for at in autotexts:
+            at.set_color("#ffffff")
+            at.set_fontweight("bold")
+            at.set_fontsize(8)
     else:
-        bars = ax.bar(x_clean, y_clean, color=color, width=0.55, zorder=3)
+        bars = ax.bar(x_clean, y_clean, color=color, width=0.55, edgecolor="none", zorder=3)
         ax.grid(axis="y", linestyle="--", alpha=0.35, zorder=0)
+        plt.xticks(fontsize=8)
+        plt.yticks(fontsize=8)
 
-    ax.set_title(title, fontsize=12.5, fontweight="bold", pad=14, color="#202124")
+    ax.set_title(title, fontsize=10.5, fontweight="bold", pad=10, color="#202124")
     if x_label and chart_type_lower != "pie":
-        ax.set_xlabel(x_label, fontsize=9.5, labelpad=8, color="#5f6368")
+        ax.set_xlabel(x_label, fontsize=8.5, labelpad=6, color="#5f6368")
     if y_label and chart_type_lower != "pie":
-        ax.set_ylabel(y_label, fontsize=9.5, labelpad=8, color="#5f6368")
+        ax.set_ylabel(y_label, fontsize=8.5, labelpad=6, color="#5f6368")
 
     for spine in ["top", "right"]:
         ax.spines[spine].set_visible(False)
@@ -748,7 +766,7 @@ def generate_data_chart(
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.savefig(buf, format="png", bbox_inches="tight", dpi=72)
     plt.close(fig)
     buf.seek(0)
     b64_data = base64.b64encode(buf.read()).decode("utf-8")
