@@ -14,6 +14,9 @@ import base64
 import io
 import json
 import os
+import shutil
+import subprocess
+import time
 from typing import Any, Dict, List, Optional
 import requests
 import google.auth
@@ -27,14 +30,40 @@ except ImportError:
 mcp = FastMCP("BigQuery-Baseline-Analyst-MCP")
 
 MANAGED_BQ_MCP_URL = "https://bigquery.googleapis.com/mcp"
+DEFAULT_PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "opm-looker-core-demo-instance")
+_TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0}
 
 
 def _get_auth_token() -> str:
     """Gets a valid Google Cloud OAuth2 access token for BigQuery API calls."""
+    now = time.time()
+    if _TOKEN_CACHE["token"] and now < _TOKEN_CACHE["expires_at"]:
+        return _TOKEN_CACHE["token"]
+
     env_token = os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN")
     if env_token:
-        return env_token.strip()
+        _TOKEN_CACHE["token"] = env_token.strip()
+        _TOKEN_CACHE["expires_at"] = now + 3000
+        return _TOKEN_CACHE["token"]
 
+    # 1. Native Cloud Run / GCE / Reasoning Engine Metadata Server
+    try:
+        meta_resp = requests.get(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+            headers={"Metadata-Flavor": "Google"},
+            timeout=2,
+        )
+        if meta_resp.status_code == 200:
+            token_data = meta_resp.json()
+            access_token = token_data.get("access_token")
+            if access_token:
+                _TOKEN_CACHE["token"] = access_token
+                _TOKEN_CACHE["expires_at"] = now + min(token_data.get("expires_in", 3000), 3000)
+                return _TOKEN_CACHE["token"]
+    except Exception:
+        pass
+
+    # 2. Application Default Credentials via google.auth
     try:
         auth_fn = getattr(google.auth, "_orig_default", google.auth.default)
         creds, _ = auth_fn(scopes=[
@@ -44,33 +73,59 @@ def _get_auth_token() -> str:
         auth_req = google.auth.transport.requests.Request()
         creds.refresh(auth_req)
         if creds.token:
-            return creds.token
+            _TOKEN_CACHE["token"] = creds.token
+            _TOKEN_CACHE["expires_at"] = now + 3000
+            return _TOKEN_CACHE["token"]
     except Exception:
         pass
+
+    # 3. Local Cloudtop fallback via gcloud CLI
+    if shutil.which("gcloud"):
+        try:
+            res = subprocess.run(
+                ["gcloud", "auth", "print-access-token"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                _TOKEN_CACHE["token"] = res.stdout.strip()
+                _TOKEN_CACHE["expires_at"] = now + 3000
+                return _TOKEN_CACHE["token"]
+        except Exception:
+            pass
 
     return ""
 
 
-def _call_managed_bq_mcp(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+def _call_managed_bq_mcp(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Invokes a tool on the official Managed BigQuery MCP server via JSON-RPC 2.0.
 
     Args:
         tool_name: The name of the tool on the Managed BigQuery MCP (e.g., 'list_dataset_ids').
         arguments: Arguments dictionary for the tool.
+        project_id: Project ID to bill and use as user-project context.
 
     Returns:
         Structured content dictionary or parsed JSON result.
     """
     token = _get_auth_token()
+    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
     headers = {
         "Content-Type": "application/json",
+        "X-Goog-User-Project": proj,
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
     body = {
         "jsonrpc": "2.0",
-        "id": 1,
+        "id": int(time.time() * 1000) % 1000000,
         "method": "tools/call",
         "params": {
             "name": tool_name,
@@ -109,10 +164,10 @@ def list_datasets(project_id: Optional[str] = None) -> str:
     """Lists available BigQuery datasets in a Google Cloud project via Managed BigQuery MCP.
 
     Args:
-        project_id: GCP project ID (default: current project from environment).
+        project_id: GCP project ID (default: current project, e.g. opm-looker-core-demo-instance).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "opm-looker-core-demo-instance")
-    res = _call_managed_bq_mcp("list_dataset_ids", {"projectId": proj, "pageSize": 50})
+    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
+    res = _call_managed_bq_mcp("list_dataset_ids", {"projectId": proj, "pageSize": 50}, project_id=proj)
 
     if "error" in res:
         return json.dumps({"error": res["error"]})
@@ -138,14 +193,14 @@ def list_tables(dataset_id: str = "thelook_ecommerce", project_id: Optional[str]
 
     Args:
         dataset_id: The BigQuery dataset ID (default: 'thelook_ecommerce').
-        project_id: The project containing the dataset (default: current project from environment).
+        project_id: The project containing the dataset (default: current project, e.g. opm-looker-core-demo-instance).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "opm-looker-core-demo-instance")
+    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
     res = _call_managed_bq_mcp("list_table_ids", {
         "projectId": proj,
         "datasetId": dataset_id,
         "pageSize": 50,
-    })
+    }, project_id=proj)
 
     if "error" in res:
         return json.dumps({"error": res["error"]})
@@ -179,14 +234,14 @@ def get_table_schema(
     Args:
         table_id: Name of the table (e.g., 'order_items', 'users', 'products', 'orders').
         dataset_id: Dataset ID (default: 'thelook_ecommerce').
-        project_id: Project ID (default: current project from environment).
+        project_id: Project ID (default: current project, e.g. opm-looker-core-demo-instance).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "opm-looker-core-demo-instance")
+    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
     res = _call_managed_bq_mcp("get_table_info", {
         "projectId": proj,
         "datasetId": dataset_id,
         "tableId": table_id,
-    })
+    }, project_id=proj)
 
     if "error" in res:
         return json.dumps({"error": res["error"]})
@@ -213,13 +268,13 @@ def execute_bigquery_sql(sql_query: str, project_id: Optional[str] = None) -> st
         sql_query: The GoogleSQL SELECT query to execute.
         project_id: GCP Project ID to bill for execution (defaults to current project).
     """
-    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", "opm-looker-core-demo-instance")
+    proj = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
     clean_sql = sql_query.strip().rstrip(";")
 
     res = _call_managed_bq_mcp("execute_sql_readonly", {
         "projectId": proj,
         "query": clean_sql,
-    })
+    }, project_id=proj)
 
     if "error" in res:
         return json.dumps({
