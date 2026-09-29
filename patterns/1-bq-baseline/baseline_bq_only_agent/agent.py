@@ -56,11 +56,11 @@ def _resilient_google_auth_default(scopes=None, request=None, quota_project_id=N
         return creds, proj or PROJECT_ID
     except Exception:
         pass
-    creds = Credentials(
-        token=_get_auth_token(),
-        quota_project_id=quota_project_id or PROJECT_ID,
-    )
-    return creds, PROJECT_ID
+    token = _get_auth_token()
+    if token:
+        creds = Credentials(token=token, quota_project_id=quota_project_id or PROJECT_ID)
+        return creds, PROJECT_ID
+    return _orig_google_auth_default(scopes=scopes, request=request, quota_project_id=quota_project_id, default_scopes=default_scopes)
 
 
 google.auth.default = _resilient_google_auth_default
