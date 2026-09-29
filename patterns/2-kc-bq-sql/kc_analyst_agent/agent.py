@@ -114,10 +114,9 @@ sql_execution_agent = LlmAgent(
 presentation_agent = LlmAgent(
     model=DEFAULT_MODEL,
     name="presentation_agent",
-    description="Formats executive answers, renders data visualizations (interactive Vega-Lite JSON, Mermaid.js, Matplotlib PNG), and attributes Looker governance.",
+    description="Formats executive answers, renders data visualizations (Matplotlib PNG image), and attributes Looker governance.",
     instruction=PRESENTATION_STAGE_PROMPT,
     tools=[
-        generate_vega_lite_chart,
         generate_data_chart,
     ],
 )
