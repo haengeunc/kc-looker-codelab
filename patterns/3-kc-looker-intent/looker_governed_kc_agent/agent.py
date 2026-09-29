@@ -10,6 +10,7 @@ from google.oauth2.credentials import Credentials
 from looker_governed_kc_agent.kc_looker_mcp_server import (
     _get_gcp_token,
     get_current_datetime,
+    kc_get_fiscal_calendar_definition,
     looker_query,
     looker_get_fields,
     kc_check_governance,
@@ -81,10 +82,11 @@ DEFAULT_MODEL = os.environ.get("VERTEX_MODEL", "gemini-2.5-flash")
 governance_policy_agent = LlmAgent(
     model=DEFAULT_MODEL,
     name="governance_policy_agent",
-    description="Enforces Knowledge Catalog governance (PII guardrails, Gold certification) and reads GCS corporate policies.",
+    description="Enforces Knowledge Catalog governance (PII guardrails, Gold certification, Fiscal Calendar) and reads GCS corporate policies.",
     instruction=GOVERNANCE_STAGE_PROMPT,
     tools=[
         get_current_datetime,
+        kc_get_fiscal_calendar_definition,
         kc_check_governance,
         list_governance_policies,
         read_gcs_policy_document,
@@ -99,6 +101,7 @@ looker_execution_agent = LlmAgent(
     instruction=LOOKER_STAGE_PROMPT,
     tools=[
         get_current_datetime,
+        kc_get_fiscal_calendar_definition,
         looker_query,
         looker_get_fields,
     ],

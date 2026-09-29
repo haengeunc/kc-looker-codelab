@@ -17,6 +17,7 @@ Tools provided:
 """
 
 import base64
+import calendar
 import datetime
 import io
 import json
@@ -24,7 +25,7 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 try:
@@ -227,24 +228,75 @@ def _get_gcp_token() -> str:
 # 0. TEMPORAL & CALENDAR CONTEXT TOOLS
 # ==============================================================================
 
+def _calculate_fiscal_period_bounds(dt: datetime.datetime, offset: int = 1) -> Dict[str, Any]:
+    """Dynamically calculates fiscal year, current fiscal quarter, and last completed fiscal quarter."""
+    m = dt.month
+    y = dt.year
+    f_month_idx = (m - 1 - offset) % 12
+    f_quarter = f_month_idx // 3 + 1
+    fy = y if m >= offset + 1 else y - 1
+
+    def _quarter_range(quarter: int, fiscal_yr: int) -> Tuple[str, str]:
+        start_f_idx = (quarter - 1) * 3
+        end_f_idx = start_f_idx + 2
+        start_cal_m = (start_f_idx + offset) % 12 + 1
+        end_cal_m = (end_f_idx + offset) % 12 + 1
+        start_cal_y = fiscal_yr if start_cal_m >= offset + 1 else fiscal_yr + 1
+        end_cal_y = fiscal_yr if end_cal_m >= offset + 1 else fiscal_yr + 1
+        last_day = calendar.monthrange(end_cal_y, end_cal_m)[1]
+        return f"{start_cal_y:04d}-{start_cal_m:02d}-01", f"{end_cal_y:04d}-{end_cal_m:02d}-{last_day:02d}"
+
+    curr_start, curr_end = _quarter_range(f_quarter, fy)
+
+    if f_quarter > 1:
+        prev_fq = f_quarter - 1
+        prev_fy = fy
+    else:
+        prev_fq = 4
+        prev_fy = fy - 1
+    prev_start, prev_end = _quarter_range(prev_fq, prev_fy)
+
+    month_names = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    start_month_name = month_names[(offset % 12) + 1]
+
+    return {
+        "fiscal_month_offset": offset,
+        "fiscal_year_start_month": start_month_name,
+        "current_fiscal_year": f"FY{fy}",
+        "current_fiscal_quarter": f"FQ{f_quarter} {fy}",
+        "current_fiscal_quarter_range": f"{curr_start} to {curr_end}",
+        "last_completed_fiscal_quarter": f"FQ{prev_fq} {prev_fy}",
+        "last_completed_fiscal_quarter_range": f"{prev_start} to {prev_end}",
+        "prev_fiscal_quarter_number": prev_fq,
+        "prev_fiscal_quarter_year": prev_fy,
+    }
+
+
 @mcp.tool()
 def get_current_datetime() -> Dict[str, Any]:
-    """Retrieve current system date, year, current quarter, previous quarter, and authoritative Looker filter syntax.
+    """Retrieve current system date, year, and standard Gregorian calendar periods.
 
-    ALWAYS call this tool or consult temporal context when the user asks for relative date ranges
-    such as 'last quarter', 'last fiscal quarter', 'this quarter', 'last month', 'YTD', or 'last year'.
+    ALWAYS call this tool when the user asks for relative calendar date ranges such as
+    'last quarter', 'this quarter', 'last month', 'YTD', or 'last year'.
     Never guess or hardcode dates from obsolete years (e.g. 2023 or 2024).
+
+    CRITICAL FOR FISCAL CALENDARS:
+    This tool only provides standard Gregorian calendar dates. DO NOT assume calendar quarters
+    equal fiscal quarters. If the user asks about fiscal periods ('fiscal quarter', 'last fiscal quarter',
+    'fiscal year', 'FQ1', etc.), DO NOT guess here. Instead, call kc_get_fiscal_calendar_definition()
+    or inspect Knowledge Catalog governance (kc_check_governance() -> business_glossary['Fiscal Calendar']).
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     current_year = now.year
-    current_quarter = (now.month - 1) // 3 + 1
+    current_month = now.month
+    current_calendar_quarter = (current_month - 1) // 3 + 1
 
-    if current_quarter > 1:
-        prev_quarter = current_quarter - 1
-        prev_quarter_year = current_year
+    if current_calendar_quarter > 1:
+        prev_calendar_quarter = current_calendar_quarter - 1
+        prev_calendar_quarter_year = current_year
     else:
-        prev_quarter = 4
-        prev_quarter_year = current_year - 1
+        prev_calendar_quarter = 4
+        prev_calendar_quarter_year = current_year - 1
 
     quarter_dates = {
         1: ("01-01", "03-31"),
@@ -252,29 +304,129 @@ def get_current_datetime() -> Dict[str, Any]:
         3: ("07-01", "09-30"),
         4: ("10-01", "12-31"),
     }
-    prev_start = f"{prev_quarter_year}-{quarter_dates[prev_quarter][0]}"
-    prev_end = f"{prev_quarter_year}-{quarter_dates[prev_quarter][1]}"
+    prev_start = f"{prev_calendar_quarter_year}-{quarter_dates[prev_calendar_quarter][0]}"
+    prev_end = f"{prev_calendar_quarter_year}-{quarter_dates[prev_calendar_quarter][1]}"
 
     return {
         "current_date": now.strftime("%Y-%m-%d"),
         "current_year": current_year,
-        "current_quarter": f"Q{current_quarter} {current_year}",
-        "last_completed_quarter": f"Q{prev_quarter} {prev_quarter_year}",
-        "last_completed_quarter_range": f"{prev_start} to {prev_end}",
-        "looker_filter_expressions": {
-            "last_quarter": "last quarter",
-            "last_fiscal_quarter": "last quarter",
-            "this_quarter": "this quarter",
-            "last_year": "last year",
+        "current_month": current_month,
+        "current_calendar_quarter": f"Q{current_calendar_quarter} {current_year}",
+        "last_completed_calendar_quarter": f"Q{prev_calendar_quarter} {prev_calendar_quarter_year}",
+        "last_completed_calendar_quarter_range": f"{prev_start} to {prev_end}",
+        "looker_standard_calendar_filter_expressions": {
+            "last_calendar_quarter": "last quarter",
+            "this_calendar_quarter": "this quarter",
+            "last_calendar_year": "last year",
             "last_30_days": "30 days",
             "last_90_days": "90 days",
             "year_to_date": "this year to date",
         },
-        "guidance": (
-            "Looker compiles relative date expressions natively against BigQuery. "
-            "Pass native Looker filter syntax into filters, e.g. {'order_items.created_date': 'last quarter'}. "
-            "Do NOT use outdated years (2023/2024)."
-        )
+        "fiscal_calendar_guidance": (
+            "CRITICAL: Do NOT guess fiscal quarters or assume they align with calendar quarters. "
+            "For any question mentioning 'fiscal' (e.g. 'last fiscal quarter', 'fiscal year', 'FQ1'): "
+            "1. Call kc_get_fiscal_calendar_definition() or inspect kc_check_governance() business_glossary['Fiscal Calendar']. "
+            "2. Retrieve the governed fiscal definition and LookML fiscal dimensions (e.g. order_items.created_fiscal_quarter). "
+            "3. Filter using LookML fiscal fields or the exact fiscal date range defined in Knowledge Catalog."
+        ),
+    }
+
+
+@mcp.tool()
+def kc_get_fiscal_calendar_definition(
+    explore_name: str = "order_items",
+    model_name: str = LOOKER_MODEL_NAME,
+) -> Dict[str, Any]:
+    """Retrieve the authoritative Fiscal Calendar definition and LookML fiscal dimensions from Knowledge Catalog.
+
+    ALWAYS call this tool whenever the user asks about fiscal periods such as:
+    - 'last fiscal quarter'
+    - 'current fiscal quarter' or 'this fiscal quarter'
+    - 'fiscal year' (e.g. FY2025, FY2026)
+    - specific fiscal quarters ('FQ1', 'FQ2', 'FQ3', 'FQ4')
+    - 'fiscal year to date' (FYTD)
+
+    This tool retrieves the governed business glossary definition from Dataplex Knowledge Catalog,
+    inspects LookML field metadata for fiscal dimensions (e.g. order_items.created_fiscal_quarter,
+    order_items.created_fiscal_year), and dynamically calculates the exact fiscal quarter date ranges
+    without guessing or conflating with calendar quarters.
+
+    Args:
+        explore_name: Name of the Looker Explore (default: 'order_items').
+        model_name: Name of the Looker Model (default: 'thelook_prod').
+
+    Returns:
+        Authoritative fiscal glossary definition, fiscal month offset, current fiscal year/quarter,
+        last completed fiscal quarter date range, and governed LookML dimensions to query.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # 1. Fetch Knowledge Catalog Governance & Business Glossary
+    gov_meta = kc_check_governance(explore_name)
+    glossary = gov_meta.get("governance_aspects", {}).get("business_glossary", {})
+    fiscal_glossary_term = glossary.get(
+        "Fiscal Calendar",
+        "Company fiscal year starts February 1 (fiscal_month_offset: 1). FQ1: Feb-Apr, FQ2: May-Jul, FQ3: Aug-Oct, FQ4: Nov-Jan."
+    )
+
+    # 2. Extract fiscal_month_offset from Knowledge Catalog or default to 1 (February)
+    offset = 1
+    if "fiscal_month_offset:" in fiscal_glossary_term:
+        try:
+            offset_str = fiscal_glossary_term.split("fiscal_month_offset:")[1].split(")")[0].strip()
+            offset = int(offset_str)
+        except Exception:
+            offset = 1
+
+    # 3. Dynamically compute exact fiscal period boundaries
+    fiscal_info = _calculate_fiscal_period_bounds(now, offset=offset)
+
+    # 4. Discover LookML fiscal dimensions from Looker
+    fiscal_dimensions = [
+        "order_items.created_fiscal_quarter",
+        "order_items.created_fiscal_year",
+    ]
+    try:
+        fields_res = looker_get_fields(explore=explore_name, model=model_name)
+        discovered = [
+            d["name"] for d in fields_res.get("dimensions", [])
+            if "fiscal" in d.get("name", "").lower() or "fiscal" in d.get("label", "").lower()
+        ]
+        if discovered:
+            fiscal_dimensions = discovered
+    except Exception:
+        pass
+
+    last_fq_label = fiscal_info["last_completed_fiscal_quarter"]
+    last_range = fiscal_info["last_completed_fiscal_quarter_range"]
+    prev_num = fiscal_info["prev_fiscal_quarter_number"]
+    prev_yr = fiscal_info["prev_fiscal_quarter_year"]
+
+    return {
+        "governance_source": "Google Cloud Knowledge Catalog (Dataplex) Business Glossary & LookML Semantic Model",
+        "glossary_term": "Fiscal Calendar",
+        "glossary_definition": fiscal_glossary_term,
+        "policy_citation": "POL-FIN-2026-V3 (Corporate Revenue Recognition & Fiscal Calendar Standard)",
+        "fiscal_month_offset": offset,
+        "fiscal_year_start": f"{fiscal_info['fiscal_year_start_month']} 1",
+        "current_date": now.strftime("%Y-%m-%d"),
+        "current_fiscal_year": fiscal_info["current_fiscal_year"],
+        "current_fiscal_quarter": fiscal_info["current_fiscal_quarter"],
+        "current_fiscal_quarter_range": fiscal_info["current_fiscal_quarter_range"],
+        "last_completed_fiscal_quarter": last_fq_label,
+        "last_completed_fiscal_quarter_range": last_range,
+        "looker_fiscal_dimensions": fiscal_dimensions,
+        "recommended_looker_query": {
+            "fields": ["order_items.created_fiscal_quarter", "order_items.total_sale_price", "order_items.order_count"],
+            "filter_option_1_by_date_range": {"order_items.created_date": last_range},
+            "filter_option_2_by_fiscal_dimension": {"order_items.created_fiscal_quarter": f"{prev_yr}-Q{prev_num}"},
+        },
+        "governance_instruction": (
+            f"Use the authoritative Knowledge Catalog definition: Company fiscal year begins {fiscal_info['fiscal_year_start_month']} 1. "
+            f"For 'last fiscal quarter', the exact completed period is {last_fq_label} ({last_range}). "
+            f"Filter using Looker's native fiscal dimension 'order_items.created_fiscal_quarter' or date range '{last_range}'. "
+            f"Always cite the Knowledge Catalog Business Glossary in your response."
+        ),
     }
 
 

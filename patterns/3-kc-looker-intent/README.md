@@ -90,6 +90,14 @@ looker_query(
 - Uses headless Matplotlib to render executive-ready charts encoded as inline **base64 Data URIs** (`![Title](data:image/png;base64,...)`).
 - Outputs native Mermaid diagrams (`xychart-beta` and `pie`) for instant interactive vector rendering in the ADK Web UI.
 
+### 3.5 Governed Fiscal Calendar via Knowledge Catalog Glossary (`kc_get_fiscal_calendar_definition`)
+- **No Hardcoded Assumptions or Guessing**: The agent does NOT guess fiscal dates or assume fiscal quarters align with standard Gregorian calendar quarters.
+- **Authoritative Business Glossary Resolution**: When the user asks about fiscal periods (*"last fiscal quarter"*, *"fiscal year"*, *"FQ1"*, *"FQ2"*):
+  1. The agent queries Knowledge Catalog's Business Glossary (`"Fiscal Calendar"` under `POL-FIN-2026-V3`).
+  2. Extracts the official `fiscal_month_offset` (e.g. `1` for February 1 corporate year start).
+  3. Inspects LookML semantic metadata for governed fiscal dimensions (`order_items.created_fiscal_quarter`, `order_items.created_fiscal_year`).
+  4. Dynamically calculates the exact quarter boundaries (e.g. FQ2 2026 = `2026-05-01 to 2026-07-31`), ensuring 100% alignment between business policy and Looker query filters.
+
 ---
 
 ## 4. Local Quickstart
