@@ -10,6 +10,9 @@ from google.oauth2.credentials import Credentials
 
 from kc_analyst_agent.kc_bq_mcp_server import (
     _get_access_token,
+    get_current_datetime,
+    kc_get_fiscal_calendar_definition,
+    list_governance_policies,
     search_knowledge_catalog,
     get_looker_explore_metadata,
     get_looker_view_metadata,
@@ -88,9 +91,12 @@ DEFAULT_MODEL = os.environ.get("VERTEX_MODEL", "gemini-2.5-flash")
 metadata_discovery_agent = LlmAgent(
     model=DEFAULT_MODEL,
     name="metadata_discovery_agent",
-    description="Discovers certified Looker Explores, Views, Joins, and Measures from Knowledge Catalog and GCS policy docs.",
+    description="Discovers certified Looker Explores, Views, Joins, Measures, and Fiscal Calendar definitions from Knowledge Catalog and GCS policy docs.",
     instruction=DISCOVERY_STAGE_PROMPT,
     tools=[
+        get_current_datetime,
+        kc_get_fiscal_calendar_definition,
+        list_governance_policies,
         check_lookml_in_knowledge_catalog,
         search_knowledge_catalog,
         get_looker_explore_metadata,
@@ -103,9 +109,11 @@ metadata_discovery_agent = LlmAgent(
 sql_execution_agent = LlmAgent(
     model=DEFAULT_MODEL,
     name="sql_execution_agent",
-    description="Compiles LookML measure formulas into standard BigQuery SQL grounded in Stage 1 metadata and executes it.",
+    description="Compiles LookML measure formulas and partition-pruned fiscal/calendar date filters into standard BigQuery SQL grounded in Stage 1 metadata and executes it.",
     instruction=SQL_STAGE_PROMPT,
     tools=[
+        get_current_datetime,
+        kc_get_fiscal_calendar_definition,
         execute_bigquery_sql,
     ],
 )

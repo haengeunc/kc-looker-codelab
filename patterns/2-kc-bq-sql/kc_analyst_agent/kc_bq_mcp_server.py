@@ -8,12 +8,14 @@ Provides tools to:
 4. Execute BigQuery SQL queries grounded in those Looker semantic definitions.
 """
 
+import calendar
+import datetime
 import json
 import os
 import shutil
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import requests
 try:
     from mcp.server.mcpserver import MCPServer as FastMCP
@@ -120,10 +122,202 @@ def _get_access_token() -> str:
 
 
 def _headers(project_id: str = DEFAULT_PROJECT_ID) -> Dict[str, str]:
+    """Returns authorization and standard content headers for Google Cloud REST APIs."""
+    token = _get_access_token()
     return {
-        "Authorization": f"Bearer {_get_access_token()}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "x-goog-user-project": project_id,
+        "X-Goog-User-Project": project_id,
+    }
+
+
+def _calculate_fiscal_period_bounds(dt: datetime.datetime, offset: int = 1) -> Dict[str, Any]:
+    """Dynamically calculates fiscal year, current fiscal quarter, and last completed fiscal quarter."""
+    m = dt.month
+    y = dt.year
+    f_month_idx = (m - 1 - offset) % 12
+    f_quarter = f_month_idx // 3 + 1
+    fy = y if m >= offset + 1 else y - 1
+
+    def _quarter_range(quarter: int, fiscal_yr: int) -> Tuple[str, str]:
+        start_f_idx = (quarter - 1) * 3
+        end_f_idx = start_f_idx + 2
+        start_cal_m = (start_f_idx + offset) % 12 + 1
+        end_cal_m = (end_f_idx + offset) % 12 + 1
+        start_cal_y = fiscal_yr if start_cal_m >= offset + 1 else fiscal_yr + 1
+        end_cal_y = fiscal_yr if end_cal_m >= offset + 1 else fiscal_yr + 1
+        last_day = calendar.monthrange(end_cal_y, end_cal_m)[1]
+        return f"{start_cal_y:04d}-{start_cal_m:02d}-01", f"{end_cal_y:04d}-{end_cal_m:02d}-{last_day:02d}"
+
+    curr_start, curr_end = _quarter_range(f_quarter, fy)
+
+    if f_quarter > 1:
+        prev_fq = f_quarter - 1
+        prev_fy = fy
+    else:
+        prev_fq = 4
+        prev_fy = fy - 1
+    prev_start, prev_end = _quarter_range(prev_fq, prev_fy)
+
+    month_names = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    start_month_name = month_names[(offset % 12) + 1]
+
+    return {
+        "fiscal_month_offset": offset,
+        "fiscal_year_start_month": start_month_name,
+        "current_fiscal_year": f"FY{fy}",
+        "current_fiscal_quarter": f"FQ{f_quarter} {fy}",
+        "current_fiscal_quarter_range": f"{curr_start} to {curr_end}",
+        "last_completed_fiscal_quarter": f"FQ{prev_fq} {prev_fy}",
+        "last_completed_fiscal_quarter_range": f"{prev_start} to {prev_end}",
+        "prev_fiscal_quarter_number": prev_fq,
+        "prev_fiscal_quarter_year": prev_fy,
+    }
+
+
+@mcp.tool()
+def get_current_datetime() -> Dict[str, Any]:
+    """Retrieve current system date, year, and standard Gregorian calendar periods.
+
+    ALWAYS call this tool when the user asks for relative calendar date ranges such as
+    'last quarter', 'this quarter', 'last month', 'YTD', or 'last year'.
+    Never guess or hardcode dates from obsolete years (e.g. 2023 or 2024).
+
+    CRITICAL FOR FISCAL CALENDARS:
+    This tool only provides standard Gregorian calendar dates. DO NOT assume calendar quarters
+    equal fiscal quarters. If the user asks about fiscal periods ('fiscal quarter', 'last fiscal quarter',
+    'fiscal year', 'FQ1', etc.), DO NOT guess here. Instead, call kc_get_fiscal_calendar_definition()
+    or inspect Knowledge Catalog governance (check_lookml_in_knowledge_catalog() -> fiscalYearNote or
+    read_gcs_policy_document()).
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    current_year = now.year
+    current_month = now.month
+    current_calendar_quarter = (current_month - 1) // 3 + 1
+
+    if current_calendar_quarter > 1:
+        prev_calendar_quarter = current_calendar_quarter - 1
+        prev_calendar_quarter_year = current_year
+    else:
+        prev_calendar_quarter = 4
+        prev_calendar_quarter_year = current_year - 1
+
+    quarter_dates = {
+        1: ("01-01", "03-31"),
+        2: ("04-01", "06-30"),
+        3: ("07-01", "09-30"),
+        4: ("10-01", "12-31"),
+    }
+    prev_start = f"{prev_calendar_quarter_year}-{quarter_dates[prev_calendar_quarter][0]}"
+    prev_end = f"{prev_calendar_quarter_year}-{quarter_dates[prev_calendar_quarter][1]}"
+
+    return {
+        "current_date": now.strftime("%Y-%m-%d"),
+        "current_year": current_year,
+        "current_month": current_month,
+        "current_calendar_quarter": f"Q{current_calendar_quarter} {current_year}",
+        "last_completed_calendar_quarter": f"Q{prev_calendar_quarter} {prev_calendar_quarter_year}",
+        "last_completed_calendar_quarter_range": f"{prev_start} to {prev_end}",
+        "standard_calendar_sql_guidance": {
+            "last_calendar_quarter": f"BETWEEN '{prev_start}' AND '{prev_end}'",
+            "this_calendar_year": f"EXTRACT(YEAR FROM created_at) = {current_year}",
+        },
+        "fiscal_calendar_guidance": (
+            "CRITICAL: Do NOT guess fiscal quarters or assume they align with calendar quarters. "
+            "For any question mentioning 'fiscal' (e.g. 'last fiscal quarter', 'fiscal year', 'FQ1'): "
+            "1. Call kc_get_fiscal_calendar_definition(explore_query='customer_orders'). "
+            "2. Retrieve the authoritative fiscal definition from Knowledge Catalog / LookML. "
+            "3. Filter BigQuery SQL using the exact fiscal date range or LookML date expression."
+        ),
+    }
+
+
+@mcp.tool()
+def kc_get_fiscal_calendar_definition(
+    explore_query: str = "customer_orders",
+    project_id: str = DEFAULT_PROJECT_ID,
+) -> Dict[str, Any]:
+    """Retrieve the authoritative Fiscal Calendar definition, LookML fiscal timeframes, and BigQuery SQL filter expressions.
+
+    ALWAYS call this tool whenever the user asks about fiscal periods such as:
+    - 'last fiscal quarter'
+    - 'current fiscal quarter' or 'this fiscal quarter'
+    - 'fiscal year' (e.g. FY2025, FY2026)
+    - specific fiscal quarters ('FQ1', 'FQ2', 'FQ3', 'FQ4')
+    - 'fiscal year to date' (FYTD)
+
+    This tool retrieves the governed business glossary definition from Dataplex Knowledge Catalog,
+    inspects LookML field metadata for fiscal dimensions (e.g. order_items.created dimension group with
+    fiscal_quarter and fiscal_year timeframes), and dynamically calculates the exact fiscal quarter date ranges
+    without guessing or conflating with calendar quarters.
+
+    Args:
+        explore_query: Name of the Looker Explore in Knowledge Catalog (default: 'customer_orders').
+        project_id: Google Cloud Project ID (default: auto-detected or YOUR-GCP-PROJECT).
+
+    Returns:
+        Authoritative fiscal glossary definition, fiscal month offset, current fiscal year/quarter,
+        last completed fiscal quarter date range, LookML fiscal dimensions, and BigQuery SQL expressions.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # 1. Fetch LookML definition & Knowledge Catalog metadata
+    lookml_meta = check_lookml_in_knowledge_catalog(explore_query=explore_query, project_id=project_id)
+    glossary_meta = lookml_meta.get("governance_aspects", {}).get("business_glossary", {})
+    fiscal_glossary_term = glossary_meta.get(
+        "Fiscal Calendar",
+        "Company fiscal year starts February 1 (fiscal_month_offset: 1). FQ1: Feb-Apr, FQ2: May-Jul, FQ3: Aug-Oct, FQ4: Nov-Jan."
+    )
+
+    # 2. Extract fiscal_month_offset from LookML metadata or glossary
+    offset = lookml_meta.get("fiscalMonthOffset", 1)
+    if "fiscal_month_offset:" in fiscal_glossary_term:
+        try:
+            offset_str = fiscal_glossary_term.split("fiscal_month_offset:")[1].split(")")[0].strip()
+            offset = int(offset_str)
+        except Exception:
+            offset = 1
+
+    # 3. Dynamically compute exact fiscal period boundaries
+    fiscal_info = _calculate_fiscal_period_bounds(now, offset=offset)
+
+    last_fq_label = fiscal_info["last_completed_fiscal_quarter"]
+    last_range = fiscal_info["last_completed_fiscal_quarter_range"]
+    prev_start, prev_end = last_range.split(" to ")
+    prev_num = fiscal_info["prev_fiscal_quarter_number"]
+    prev_yr = fiscal_info["prev_fiscal_quarter_year"]
+
+    # 4. Standard BigQuery SQL expressions for LookML fiscal timeframes
+    # Looker compiles created_fiscal_quarter with fiscal_month_offset: 1 as:
+    # Looker: EXTRACT(YEAR FROM DATE_ADD(created_at, INTERVAL -1 MONTH)) and EXTRACT(QUARTER FROM DATE_ADD(created_at, INTERVAL -1 MONTH))
+    # Or exact date range: created_at >= '2026-05-01' AND created_at <= '2026-07-31 23:59:59'
+    return {
+        "governance_source": "Google Cloud Knowledge Catalog (Dataplex) Business Glossary & LookML Semantic Model",
+        "glossary_term": "Fiscal Calendar",
+        "glossary_definition": fiscal_glossary_term,
+        "policy_citation": "POL-FIN-2026-V3 (Corporate Revenue Recognition & Fiscal Calendar Standard)",
+        "fiscal_month_offset": offset,
+        "fiscal_year_start": f"{fiscal_info['fiscal_year_start_month']} 1",
+        "current_date": now.strftime("%Y-%m-%d"),
+        "current_fiscal_year": fiscal_info["current_fiscal_year"],
+        "current_fiscal_quarter": fiscal_info["current_fiscal_quarter"],
+        "current_fiscal_quarter_range": fiscal_info["current_fiscal_quarter_range"],
+        "last_completed_fiscal_quarter": last_fq_label,
+        "last_completed_fiscal_quarter_range": last_range,
+        "lookml_dimension_group": "order_items.created",
+        "lookml_fiscal_timeframes": ["fiscal_quarter", "fiscal_year"],
+        "recommended_bigquery_sql_filters": {
+            "option_1_exact_date_bounds": f"DATE(order_items.created_at) BETWEEN '{prev_start}' AND '{prev_end}'",
+            "option_2_timestamp_range": f"order_items.created_at >= TIMESTAMP('{prev_start} 00:00:00 UTC') AND order_items.created_at <= TIMESTAMP('{prev_end} 23:59:59 UTC')",
+            "option_3_lookml_fiscal_formula": f"EXTRACT(QUARTER FROM DATE_ADD(DATE(order_items.created_at), INTERVAL -{offset} MONTH)) = {prev_num} AND EXTRACT(YEAR FROM DATE_ADD(DATE(order_items.created_at), INTERVAL -{offset} MONTH)) = {prev_yr}",
+        },
+        "governance_instruction": (
+            f"Use the authoritative Knowledge Catalog definition: Company fiscal year begins {fiscal_info['fiscal_year_start_month']} 1. "
+            f"For 'last fiscal quarter', the exact completed period is {last_fq_label} ({last_range}). "
+            f"In BigQuery Standard SQL, filter using: DATE(order_items.created_at) BETWEEN '{prev_start}' AND '{prev_end}'. "
+            f"This produces an ultra-efficient, partition-pruned BigQuery execution. "
+            f"Always cite the Knowledge Catalog Business Glossary (fiscal_month_offset: {offset}) in the final response."
+        ),
     }
 
 
@@ -503,6 +697,20 @@ def check_lookml_in_knowledge_catalog(
                 "fiscalYearNote": "Fiscal Year starts February 1 (fiscal_month_offset: 1).",
                 "joins": explore_meta.get("joins", []),
                 "quickStartQueries": explore_meta.get("quickStartQueries", []),
+                "governance_aspects": {
+                    "certification_status": "GOLD",
+                    "certified_by": "Enterprise Data Governance Council",
+                    "pii_protection": {
+                        "restricted_columns": ["users.email", "users.phone", "users.street_address"],
+                        "rule": "BLOCKED: Never include in AI-generated SQL outputs."
+                    },
+                    "business_glossary": {
+                        "Net Revenue": "Certified metric (Gold Tier). Calculated strictly upon fulfillment (order_items.status = 'Complete'). Excludes cancelled, returned, and processing orders (ASC 606).",
+                        "Gross Revenue": "Total monetary sum of all placed order merchandise (order_items.sale_price) prior to any refund or cancellation deductions.",
+                        "Refund Rate": "Ratio of returned/refunded order item value against total order volume.",
+                        "Fiscal Calendar": "Company fiscal year starts February 1 (fiscal_month_offset: 1). FQ1: Feb-Apr, FQ2: May-Jul, FQ3: Aug-Oct, FQ4: Nov-Jan.",
+                    }
+                },
                 "views": views_metadata,
             }
 
@@ -609,9 +817,72 @@ def check_lookml_in_knowledge_catalog(
             "pii_protection": {
                 "restricted_columns": ["users.email", "users.phone", "users.street_address"],
                 "rule": "BLOCKED: Never include in AI-generated SQL outputs."
+            },
+            "business_glossary": {
+                "Net Revenue": "Certified metric (Gold Tier). Calculated strictly upon fulfillment (order_items.status = 'Complete'). Excludes cancelled, returned, and processing orders (ASC 606).",
+                "Gross Revenue": "Total monetary sum of all placed order merchandise (order_items.sale_price) prior to any refund or cancellation deductions.",
+                "Refund Rate": "Ratio of returned/refunded order item value against total order volume.",
+                "Fiscal Calendar": "Company fiscal year starts February 1 (fiscal_month_offset: 1). FQ1: Feb-Apr, FQ2: May-Jul, FQ3: Aug-Oct, FQ4: Nov-Jan.",
             }
         },
     }
+
+
+@mcp.tool()
+def list_governance_policies(project_id: str = DEFAULT_PROJECT_ID) -> Dict[str, Any]:
+    """Lists all active corporate and regional commercial governance policies indexed in Google Cloud Knowledge Catalog (Dataplex).
+
+    Returns registered entry names, display titles, GCS document URIs, certification tiers, and summaries.
+    """
+    policies = [
+        {
+            "entry_name": "south-korea-outerwear-campaign-policy",
+            "full_dataplex_entry": f"projects/{project_id}/locations/us-central1/entryGroups/governance-policies/entries/south-korea-outerwear-campaign-policy",
+            "title": "2026 APAC Regional Growth Strategy & Commercial Campaign Policy: South Korea Outerwear & Coats Acceleration Initiative",
+            "document_id": "POL-MKT-2026-KR04",
+            "effective_period": "July 1, 2026 – December 31, 2026 (6 Months)",
+            "classification": "Confidential - Commercial Strategy & Governance",
+            "gcs_uri": KOREA_POLICY_GCS_URI,
+            "steward": "APAC Commercial Strategy & Merchandising",
+            "certification_tier": "Gold",
+            "topics": [
+                "South Korea",
+                "Outerwear & Coats (#1 Revenue Category)",
+                "Campaign Promo Code: KOREA_WINTER_15 (15% off orders > $120)",
+                "Gross Margin Floor (Mandatory 42.0%)",
+                "Regional 60-Day Return Window (vs 30-day standard)",
+                "Target Revenue Quota: $125,000.00 (800+ orders)",
+                "South Korea PIPA PII Protection (Restricted customer identifiers)",
+            ],
+        },
+        {
+            "entry_name": "corporate-revenue-refund-policy",
+            "full_dataplex_entry": f"projects/{project_id}/locations/us-central1/entryGroups/governance-policies/entries/corporate-revenue-refund-policy",
+            "title": "Corporate Revenue Recognition & Customer Refund Policy",
+            "document_id": "POL-FIN-2026-V3",
+            "effective_period": "FY2025-2026",
+            "classification": "Confidential - Internal Operations",
+            "gcs_uri": DEFAULT_POLICY_GCS_URI,
+            "steward": "Finance & Revenue Operations",
+            "certification_tier": "Gold",
+            "topics": [
+                "Revenue Recognition (ASC 606 / GAAP)",
+                "Net Revenue Definition (Fulfillment Complete only)",
+                "Standard 30-Day Customer Return Window",
+                "15% Restocking Fee for clearance/electronics",
+                "Fiscal Calendar Definition (Starts Feb 1, fiscal_month_offset: 1)",
+                "GDPR / CCPA PII Protection Mandate",
+            ],
+        },
+    ]
+    return {
+        "status": "success",
+        "catalog_source": "Google Cloud Knowledge Catalog (Dataplex)",
+        "entry_group": f"projects/{project_id}/locations/us-central1/entryGroups/governance-policies",
+        "total_policies_registered": len(policies),
+        "available_policies": policies,
+    }
+
 
 
 DEFAULT_POLICY_GCS_URI = os.environ.get(
