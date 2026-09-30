@@ -99,7 +99,10 @@ def _resolve_local_policy_file(filename: str) -> str:
 LOCAL_POLICY_PDF = _resolve_local_policy_file("Corporate_Revenue_and_Refund_Policy.pdf")
 LOCAL_KOREA_CAMPAIGN_POLICY_PDF = _resolve_local_policy_file("South_Korea_Outerwear_Promotional_Campaign_Policy.pdf")
 
-_LOOKER_TOKEN: Dict[str, Any] = {"token": None, "expires_at": 0}
+# Official Google Cloud Managed MCP Endpoints
+LOOKER_MCP_ENDPOINT = os.environ.get("LOOKER_MCP_ENDPOINT", "https://looker.googleapis.com/mcp")
+DATAPLEX_MCP_ENDPOINT = os.environ.get("DATAPLEX_MCP_ENDPOINT", "https://dataplex.googleapis.com/mcp")
+
 _GCP_TOKEN: Dict[str, Any] = {"token": None, "expires_at": 0}
 
 
@@ -111,58 +114,8 @@ def _clean_html(text: Any) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def _configure_looker_session(token: str) -> None:
-    """Configures Looker session workspace and git branch to ensure queries target opm-looker-core-demo-instance."""
-    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
-    if LOOKER_WORKSPACE:
-        try:
-            requests.patch(
-                f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/session",
-                headers=headers,
-                json={"workspace_id": LOOKER_WORKSPACE},
-                timeout=10,
-            )
-        except Exception:
-            pass
-
-    if LOOKER_WORKSPACE == "dev" and LOOKER_GIT_BRANCH:
-        try:
-            requests.put(
-                f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/projects/{LOOKER_PROJECT_ID}/git_branch",
-                headers=headers,
-                json={"name": LOOKER_GIT_BRANCH},
-                timeout=10,
-            )
-        except Exception:
-            pass
-
-
-def _get_looker_token() -> str:
-    """Acquires a valid Looker API 4.0 access token via Client ID and Client Secret."""
-    now = time.time()
-    if _LOOKER_TOKEN["token"] and now < _LOOKER_TOKEN["expires_at"]:
-        return _LOOKER_TOKEN["token"]
-
-    login_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/login"
-    resp = requests.post(
-        login_url,
-        data={"client_id": LOOKER_CLIENT_ID, "client_secret": LOOKER_CLIENT_SECRET},
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Looker API authentication failed ({resp.status_code}): {resp.text}")
-
-    token_data = resp.json()
-    token = token_data.get("access_token")
-    expires_in = token_data.get("expires_in", 3600)
-    _LOOKER_TOKEN["token"] = token
-    _LOOKER_TOKEN["expires_at"] = now + expires_in - 60
-    _configure_looker_session(token)
-    return token
-
-
 def _get_gcp_token() -> str:
-    """Gets a valid Google Cloud token for Dataplex Knowledge Catalog and GCS."""
+    """Gets a valid Google Cloud token for Managed MCP, Dataplex Knowledge Catalog, and GCS."""
     now = time.time()
     if _GCP_TOKEN["token"] and now < _GCP_TOKEN["expires_at"]:
         return _GCP_TOKEN["token"]
@@ -222,6 +175,48 @@ def _get_gcp_token() -> str:
             pass
 
     return ""
+
+
+def _mcp_headers(project_id: str = PROJECT_ID) -> Dict[str, str]:
+    """Builds authenticated headers forwarding GCP Bearer token and X-Goog-User-Project."""
+    token = _get_gcp_token()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-User-Project": project_id,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _call_managed_mcp_tool(
+    endpoint: str,
+    tool_name: str,
+    arguments: Dict[str, Any],
+    project_id: str = PROJECT_ID,
+    timeout: int = 45,
+) -> Dict[str, Any]:
+    """Helper to execute an authenticated tool on a Google Managed MCP server via JSON-RPC 2.0."""
+    headers = _mcp_headers(project_id)
+    payload = {
+        "jsonrpc": "2.0",
+        "id": int(time.time() * 1000) % 1000000,
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    }
+    try:
+        resp = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code != 200:
+            return {"error": f"Managed MCP HTTP {resp.status_code}: {resp.text}", "isError": True}
+        data = resp.json()
+        if "error" in data:
+            return {"error": data["error"].get("message", str(data["error"])), "isError": True}
+        return data.get("result", {})
+    except Exception as e:
+        return {"error": f"Managed MCP call exception: {e}", "isError": True}
 
 
 # ==============================================================================
@@ -430,10 +425,6 @@ def kc_get_fiscal_calendar_definition(
     }
 
 
-# ==============================================================================
-# 1. LOOKER SEMANTIC QUERY TOOLS (Deterministic Text-to-Intent, No Raw SQL)
-# ==============================================================================
-
 @mcp.tool()
 def looker_query(
     fields: List[str],
@@ -447,9 +438,9 @@ def looker_query(
 ) -> Dict[str, Any]:
     """Execute a governed analytical query through Looker's Semantic Modeling Engine with native visualization.
 
-    This tool translates your business intent into LookML dimensions and measures. Looker automatically
-    generates the dialect-specific SQL with symmetric aggregates, manages joins, returns data rows,
-    and creates a certified, interactive Looker visualization URL.
+    Delegates query execution to Google Cloud Managed Looker MCP (https://looker.googleapis.com/mcp)
+    via "run_inline_query", translating business intent into LookML dimensions and measures without
+    raw SQL generation, while preserving native visualization links.
 
     Args:
         fields: Fully-qualified LookML field names (dimensions, measures).
@@ -465,11 +456,6 @@ def looker_query(
     Returns:
         Dictionary containing Looker query status, row count, data rows, and native Looker visualization share URLs.
     """
-    token = _get_looker_token()
-    _configure_looker_session(token)
-    headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
-
-    # Map friendly chart_type to Looker vis_config
     type_map = {
         "column": "looker_column",
         "bar": "looker_bar",
@@ -518,64 +504,122 @@ def looker_query(
             norm_fname = field_alias_map.get(fname, fname)
             norm_sorts.append(f"{norm_fname} {parts[1]}" if len(parts) > 1 else norm_fname)
 
-    # 1. Register query definition with Looker to generate interactive visualization URLs
-    create_query_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries"
-    query_payload = {
-        "model": model,
-        "view": explore,
-        "fields": norm_fields,
-        "limit": str(limit),
-        "vis_config": effective_vis_config,
-    }
-    if norm_filters:
-        query_payload["filters"] = norm_filters
-    if norm_sorts:
-        query_payload["sorts"] = norm_sorts
-
-
     start_t = time.time()
-    query_id = None
+    rows = []
+    managed_mcp_success = False
+    mcp_error_msg = ""
+
+    # 1. Primary: Delegate query execution to official Managed Looker MCP "run_inline_query"
+    try:
+        mcp_args = {
+            "model": model,
+            "explore": explore,
+            "fields": norm_fields,
+            "limit": limit,
+        }
+        if norm_filters:
+            mcp_args["filters"] = norm_filters
+        if norm_sorts:
+            mcp_args["sorts"] = norm_sorts
+
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=LOOKER_MCP_ENDPOINT,
+            tool_name="run_inline_query",
+            arguments=mcp_args,
+            project_id=PROJECT_ID,
+            timeout=45,
+        )
+        if not mcp_res.get("isError"):
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    parsed_res = json.loads(item["text"])
+                    if isinstance(parsed_res, list):
+                        rows = parsed_res
+                        managed_mcp_success = True
+                    elif isinstance(parsed_res, dict) and "rows" in parsed_res:
+                        rows = parsed_res["rows"]
+                        managed_mcp_success = True
+                    break
+        else:
+            mcp_error_msg = mcp_res.get("error", "")
+    except Exception as e:
+        mcp_error_msg = str(e)
+
+    # 2. Resilient fallback: Direct Looker REST API execution
     share_url = None
     expanded_url = None
+    if not managed_mcp_success:
+        try:
+            gcp_token = _get_gcp_token()
+            headers = {"Authorization": f"Bearer {gcp_token}", "Content-Type": "application/json"}
+            create_query_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries"
+            query_payload = {
+                "model": model,
+                "view": explore,
+                "fields": norm_fields,
+                "limit": str(limit),
+                "vis_config": effective_vis_config,
+            }
+            if norm_filters:
+                query_payload["filters"] = norm_filters
+            if norm_sorts:
+                query_payload["sorts"] = norm_sorts
 
-    try:
-        create_resp = requests.post(create_query_url, headers=headers, json=query_payload, timeout=20)
-        if create_resp.status_code in (200, 201):
-            q_data = create_resp.json()
-            query_id = q_data.get("id")
-            share_url = q_data.get("share_url")
-            expanded_url = q_data.get("expanded_share_url") or (
-                f"{LOOKER_BASE_URL.rstrip('/')}{q_data.get('url')}" if q_data.get("url") else None
-            )
-    except Exception:
-        pass
+            query_id = None
+            try:
+                create_resp = requests.post(create_query_url, headers=headers, json=query_payload, timeout=15)
+                if create_resp.status_code in (200, 201):
+                    q_data = create_resp.json()
+                    query_id = q_data.get("id")
+                    share_url = q_data.get("share_url")
+                    expanded_url = q_data.get("expanded_share_url") or (
+                        f"{LOOKER_BASE_URL.rstrip('/')}{q_data.get('url')}" if q_data.get("url") else None
+                    )
+            except Exception:
+                pass
 
-    # 2. Run query to retrieve data
-    if query_id:
-        run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/{query_id}/run/json"
-        resp = requests.get(run_url, headers=headers, timeout=45)
-    else:
-        run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/run/json"
-        resp = requests.post(run_url, headers=headers, json=query_payload, timeout=45)
+            if query_id:
+                run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/{query_id}/run/json"
+                resp = requests.get(run_url, headers=headers, timeout=40)
+            else:
+                run_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries/run/json"
+                resp = requests.post(run_url, headers=headers, json=query_payload, timeout=40)
+
+            if resp.status_code == 200:
+                rows = resp.json()
+            elif not rows and mcp_error_msg:
+                return {
+                    "error": f"Looker Query Error (Managed MCP: {mcp_error_msg}; REST: {resp.status_code} - {resp.text})",
+                    "requested_fields": fields,
+                    "explore": explore,
+                }
+        except Exception as e:
+            if not rows and mcp_error_msg:
+                return {
+                    "error": f"Looker Query Error: {mcp_error_msg} / {e}",
+                    "requested_fields": fields,
+                    "explore": explore,
+                }
 
     duration_sec = round(time.time() - start_t, 3)
 
-    if resp.status_code != 200:
-        return {
-            "error": f"Looker Query Error ({resp.status_code}): {resp.text}",
-            "requested_fields": fields,
-            "explore": explore,
-        }
+    # Construct exploration link if not already generated by Looker query ID
+    if not share_url or not expanded_url:
+        import urllib.parse
+        fields_param = urllib.parse.quote(",".join(norm_fields))
+        filter_params = "&".join(f"f[{urllib.parse.quote(k)}]={urllib.parse.quote(str(v))}" for k, v in norm_filters.items())
+        sort_params = f"&sorts={urllib.parse.quote(','.join(norm_sorts))}" if norm_sorts else ""
+        query_str = f"fields={fields_param}&limit={limit}{sort_params}{'&' + filter_params if filter_params else ''}"
+        generated_explore_url = f"{LOOKER_BASE_URL.rstrip('/')}/explore/{model}/{explore}?{query_str}"
+        expanded_url = expanded_url or generated_explore_url
+        share_url = share_url or generated_explore_url
 
-    rows = resp.json()
     return {
         "status": "success",
-        "semantic_engine": "Looker Semantic Layer (LookML)",
+        "semantic_engine": "Looker Managed MCP / LookML",
         "source_dataset": f"{PROJECT_ID}.thelook_ecommerce",
         "model": model,
         "explore": explore,
-        "workspace": LOOKER_WORKSPACE,
-        "git_branch": LOOKER_GIT_BRANCH,
         "fields_queried": fields,
         "filters_applied": filters or {},
         "sorts_applied": sorts or [],
@@ -595,62 +639,88 @@ def looker_get_fields(
 ) -> Dict[str, Any]:
     """Retrieve available Dimensions and Measures from a Looker Explore.
 
+    Delegates metadata discovery to Google Cloud Managed Looker MCP (https://looker.googleapis.com/mcp)
+    via "get_explore_metadata" tool with fallback to Looker REST API.
+
     Args:
         explore: Looker Explore name (default: "order_items").
         model: Looker Model name (default: "thelook_prod").
     """
-    token = _get_looker_token()
-    _configure_looker_session(token)
-    url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/lookml_models/{model}/explores/{explore}"
-    headers = {"Authorization": f"token {token}"}
+    dimensions: List[Dict[str, Any]] = []
+    measures: List[Dict[str, Any]] = []
+    explore_label = explore
 
-    resp = requests.get(url, headers=headers, timeout=20)
-    if resp.status_code != 200:
-        return {"error": f"Failed to fetch explore fields ({resp.status_code}): {resp.text}"}
+    # 1. Primary: Official Managed Looker MCP "get_explore_metadata"
+    try:
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=LOOKER_MCP_ENDPOINT,
+            tool_name="get_explore_metadata",
+            arguments={"model": model, "explore": explore},
+            project_id=PROJECT_ID,
+            timeout=25,
+        )
+        if not mcp_res.get("isError"):
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    meta = json.loads(item["text"])
+                    explore_label = meta.get("label", explore)
+                    fields_data = meta.get("fields", {})
+                    for d in fields_data.get("dimensions", []):
+                        dimensions.append({
+                            "name": d.get("name"),
+                            "label": d.get("label_short") or d.get("label"),
+                            "type": d.get("type"),
+                            "description": d.get("description", ""),
+                        })
+                    for m in fields_data.get("measures", []):
+                        measures.append({
+                            "name": m.get("name"),
+                            "label": m.get("label_short") or m.get("label"),
+                            "type": m.get("type"),
+                            "description": m.get("description", ""),
+                        })
+                    if dimensions or measures:
+                        break
+    except Exception:
+        pass
 
-    data = resp.json()
-    fields_data = data.get("fields", {})
-
-    dimensions = []
-    for d in fields_data.get("dimensions", []):
-        dimensions.append({
-            "name": d.get("name"),
-            "label": d.get("label_short") or d.get("label"),
-            "type": d.get("type"),
-            "description": d.get("description", ""),
-        })
-
-    measures = []
-    for m in fields_data.get("measures", []):
-        measures.append({
-            "name": m.get("name"),
-            "label": m.get("label_short") or m.get("label"),
-            "type": m.get("type"),
-            "description": m.get("description", ""),
-        })
+    # 2. Resilient fallback: Direct Looker REST API
+    if not dimensions and not measures:
+        try:
+            gcp_token = _get_gcp_token()
+            headers = {"Authorization": f"Bearer {gcp_token}"}
+            url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/lookml_models/{model}/explores/{explore}"
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.status_code == 200:
+                data = resp.json()
+                explore_label = data.get("label") or explore_label
+                fields_data = data.get("fields", {})
+                for d in fields_data.get("dimensions", []):
+                    dimensions.append({
+                        "name": d.get("name"),
+                        "label": d.get("label_short") or d.get("label"),
+                        "type": d.get("type"),
+                        "description": d.get("description", ""),
+                    })
+                for m in fields_data.get("measures", []):
+                    measures.append({
+                        "name": m.get("name"),
+                        "label": m.get("label_short") or m.get("label"),
+                        "type": m.get("type"),
+                        "description": m.get("description", ""),
+                    })
+        except Exception:
+            pass
 
     return {
         "model": model,
         "explore": explore,
-        "label": data.get("label"),
+        "label": explore_label,
         "total_dimensions": len(dimensions),
         "total_measures": len(measures),
         "dimensions": dimensions,
         "measures": measures,
     }
-
-
-def _get_dataplex_client() -> Optional[Any]:
-    """Instantiates a google.cloud.dataplex_v1.CatalogServiceClient using ambient/default credentials."""
-    try:
-        from google.cloud import dataplex_v1
-        import google.auth
-
-        auth_fn = getattr(google.auth, "_orig_default", google.auth.default)
-        creds, _ = auth_fn(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        return dataplex_v1.CatalogServiceClient(credentials=creds)
-    except Exception:
-        return None
 
 
 def _search_dataplex_entries(
@@ -659,33 +729,35 @@ def _search_dataplex_entries(
     semantic_search: bool = True,
     page_size: int = 15,
 ) -> List[Dict[str, Any]]:
-    """Performs dynamic semantic search over Dataplex Knowledge Catalog entries using SearchEntriesRequest.
+    """Performs dynamic semantic search over Dataplex Knowledge Catalog entries.
 
-    Leverages dataplex_v1.SearchEntriesRequest(semantic_search=True) to dynamically discover
-    explores, views, and governance policy documents rather than relying strictly on fixed path formatting.
-    Falls back gracefully to Dataplex REST searchEntries if the client library encounters an error.
+    Delegates search execution to official Google Cloud Managed Dataplex MCP (https://dataplex.googleapis.com/mcp)
+    via "search_entries" tool, falling back to Dataplex REST searchEntries API.
     """
-    # 1. Primary: Official dataplex_v1.CatalogServiceClient with SearchEntriesRequest
-    client = _get_dataplex_client()
-    if client:
-        try:
-            from google.cloud import dataplex_v1
-            from google.protobuf.json_format import MessageToDict
+    search_query = f"{query} projectid:({project_id})" if f"projectid:({project_id})" not in query else query
 
-            search_parent = f"projects/{project_id}/locations/global"
-            search_query = f"{query} projectid:({project_id})" if f"projectid:({project_id})" not in query else query
-            request = dataplex_v1.SearchEntriesRequest(
-                name=search_parent,
-                query=search_query,
-                page_size=page_size,
-                semantic_search=semantic_search,
-            )
-            response = client.search_entries(request=request)
-            results = [MessageToDict(r.dataplex_entry._pb) for r in response.results]
-            if results:
-                return results
-        except Exception:
-            pass
+    # 1. Primary: Official Managed Dataplex MCP "search_entries"
+    try:
+        mcp_res = _call_managed_mcp_tool(
+            endpoint=DATAPLEX_MCP_ENDPOINT,
+            tool_name="search_entries",
+            arguments={
+                "projectId": project_id,
+                "query": search_query,
+                "pageSize": min(page_size * 2, 50),
+            },
+            project_id=project_id,
+            timeout=30,
+        )
+        if not mcp_res.get("isError"):
+            for item in mcp_res.get("content", []):
+                if isinstance(item, dict) and item.get("text"):
+                    parsed = json.loads(item["text"])
+                    results = [r.get("dataplexEntry", {}) for r in parsed.get("results", []) if r.get("dataplexEntry")]
+                    if results:
+                        return results
+    except Exception:
+        pass
 
     # 2. Secondary fallback: Direct Dataplex REST API
     token = _get_gcp_token()
@@ -694,7 +766,7 @@ def _search_dataplex_entries(
             url = f"https://dataplex.googleapis.com/v1/projects/{project_id}/locations/global:searchEntries"
             headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             payload = {
-                "query": f"{query} projectid:({project_id})",
+                "query": search_query,
                 "pageSize": page_size,
                 "semanticSearch": semantic_search,
             }
@@ -721,8 +793,8 @@ def kc_check_governance(
     """Check enterprise data governance metadata and aspects in Google Cloud Knowledge Catalog (Dataplex).
 
     Dynamically queries Dataplex Knowledge Catalog for the Looker Explore and its underlying Views
-    (in the @looker entry group) using dynamic semantic search (dataplex_v1.SearchEntriesRequest with
-    semantic_search=True) to discover:
+    (in the @looker entry group) using Managed Dataplex MCP (https://dataplex.googleapis.com/mcp)
+    via "search_entries" and "lookup_entry" tools to discover:
     1. Certification status & tier (e.g. Gold certified).
     2. Column-level and view-level Aspects (e.g. data-governance, data-classification, has-pii, business owner notes).
     3. Restricted PII fields and compliance masking rules based on applied aspects.
@@ -752,7 +824,7 @@ def kc_check_governance(
         f"lookml_projects/{lookml_proj}/models/{model_name}/explores/{normalized_explore}"
     )
 
-    # 1. Dynamic Semantic Search via dataplex_v1.SearchEntriesRequest(semantic_search=True)
+    # 1. Dynamic Search via Managed Dataplex MCP search_entries
     semantic_matches = _search_dataplex_entries(
         query=explore_name,
         project_id=project_id,
@@ -781,7 +853,7 @@ def kc_check_governance(
 
     ranked_explores = sorted(explore_candidates, key=_score_explore_match, reverse=True)
     resolved_explore_entry_path = ranked_explores[0]["name"] if ranked_explores else None
-    discovery_method = "dynamic_semantic_search (dataplex_v1.SearchEntriesRequest)" if resolved_explore_entry_path else "deterministic_fallback"
+    discovery_method = "managed_dataplex_mcp (search_entries / lookup_entry)" if resolved_explore_entry_path else "deterministic_fallback"
 
     # If no matching explore was found in semantic search, use fixed path formatting fallback
     if not resolved_explore_entry_path:
@@ -811,111 +883,137 @@ def kc_check_governance(
         "description": "Authoritative corporate e-commerce model certified for board and executive reporting.",
     }
 
-    if token:
+    def _lookup_entry_aspects(entry_resource_name: str) -> Dict[str, Any]:
+        """Looks up an entry's aspects via Managed Dataplex MCP lookup_entry or REST fallback."""
+        ent_loc = location
+        if "/locations/" in entry_resource_name:
+            try:
+                ent_loc = entry_resource_name.split("/locations/")[1].split("/")[0]
+            except Exception:
+                ent_loc = location
+
+        # Method A: Managed Dataplex MCP lookup_entry
         try:
-            # 2. Fetch Explore Entry from Dataplex with view=ALL
-            exp_url = f"https://dataplex.googleapis.com/v1/{resolved_explore_entry_path}?view=ALL"
-            exp_resp = requests.get(exp_url, headers=headers, timeout=8)
-            exp_data = exp_resp.json() if exp_resp.status_code == 200 else {}
-
-            # Check if any governance/certification aspects are applied directly on the explore
-            for a_key, a_val in exp_data.get("aspects", {}).items():
-                if any(x in a_key for x in ("looker-explore", "schema")):
-                    continue
-                a_data = a_val.get("data", {})
-                applied_aspects_list.append({
-                    "target": f"explore:{normalized_explore}",
-                    "aspect_type": a_val.get("aspectType", a_key).split("/")[-1],
-                    "path": a_val.get("path", ""),
-                    "data": a_data,
-                })
-                # Check for certification tier updates
-                if "certification_tier" in a_data:
-                    data_certification["certification_tier"] = a_data["certification_tier"]
-                if "data_steward" in a_data:
-                    data_certification["steward"] = a_data["data_steward"]
-
-            # Extract joined views
-            looker_exp_aspect = exp_data.get("aspects", {}).get("655216118709.global.looker-explore", {}).get("data", {})
-            joins = looker_exp_aspect.get("joins", [])
-            base_view = looker_exp_aspect.get("viewName", normalized_explore)
-            view_names = [base_view] + [j.get("name") for j in joins if j.get("name")]
-            if not view_names:
-                view_names = [normalized_explore, "users", "products", "inventory_items", "distribution_centers"]
-
-            # Parent model path resolved from explore entry
-            parent_model_path = resolved_explore_entry_path.split("/explores/")[0]
-
-            # 3. Inspect each view for column-level & view-level aspects
-            for vname in view_names:
-                views_inspected.append(vname)
-                v_entry_path = f"{parent_model_path}/views/{vname}"
-                v_url = f"https://dataplex.googleapis.com/v1/{v_entry_path}?view=ALL"
-                v_resp = requests.get(v_url, headers=headers, timeout=5)
-                if v_resp.status_code != 200:
-                    continue
-                v_data = v_resp.json()
-                v_aspects = v_data.get("aspects", {})
-
-                # Check custom applied aspects
-                for a_key, a_val in v_aspects.items():
-                    if any(x in a_key for x in ("looker-view", "schema")):
-                        continue
-                    path = a_val.get("path") or ""
-                    a_data = a_val.get("data") or {}
-                    atype = a_val.get("aspectType") or a_key
-                    atype_short = atype.split("/")[-1]
-
-                    applied_aspects_list.append({
-                        "view": vname,
-                        "aspect_type": atype_short,
-                        "path": path,
-                        "data": a_data,
-                    })
-
-                    # Determine field name from path or aspect key
-                    field_part = ""
-                    if path.startswith("Schema."):
-                        field_part = path.replace("Schema.", "")
-                    elif "@Schema." in a_key:
-                        field_part = a_key.split("@Schema.")[-1]
-
-                    full_field = f"{vname}.{field_part}" if field_part else vname
-
-                    is_pii = bool(a_data.get("has-pii") or a_data.get("is_pii"))
-                    classification = str(a_data.get("data-classification") or a_data.get("classification") or "")
-                    is_sensitive = is_pii or classification.lower() in ("sensitive", "confidential", "restricted", "pii")
-
-                    if is_sensitive:
-                        owner_guidance = _clean_html(a_data.get("business-owner") or a_data.get("guidance") or a_data.get("description") or "")
-                        dynamic_restricted_fields.append({
-                            "field": full_field,
-                            "classification": classification.upper() if classification else "RESTRICTED_PII",
-                            "has_pii": is_pii,
-                            "aspect_type": atype_short,
-                            "masking_rule": "MASK_ALL" if "email" in full_field else "SUPPRESS",
-                            "guidance": owner_guidance or f"Column tagged as {classification} in Dataplex Knowledge Catalog aspect '{atype_short}'.",
-                        })
-
-                # Also inspect LookML/schema annotations tags (e.g. tags: email)
-                schema_aspect = v_aspects.get("655216118709.global.schema", {}).get("data", {})
-                for field_def in schema_aspect.get("fields", []):
-                    fname = field_def.get("name", "")
-                    ftags = str(field_def.get("annotations", {}).get("tags", "")).lower()
-                    if any(t in ftags for t in ("email", "pii", "sensitive", "restricted")):
-                        full_field = f"{vname}.{fname}"
-                        if not any(f["field"] == full_field for f in dynamic_restricted_fields):
-                            dynamic_restricted_fields.append({
-                                "field": full_field,
-                                "classification": "RESTRICTED_PII",
-                                "has_pii": True,
-                                "aspect_type": "schema-annotation-tag",
-                                "masking_rule": "MASK_ALL" if "email" in full_field else "SUPPRESS",
-                                "guidance": f"Customer {fname} tagged with '{ftags}' in schema metadata.",
-                            })
-
+            mcp_lookup = _call_managed_mcp_tool(
+                endpoint=DATAPLEX_MCP_ENDPOINT,
+                tool_name="lookup_entry",
+                arguments={
+                    "projectId": project_id,
+                    "location": ent_loc,
+                    "entry": entry_resource_name,
+                    "view": "ALL",
+                },
+                project_id=project_id,
+                timeout=25,
+            )
+            if not mcp_lookup.get("isError"):
+                for itm in mcp_lookup.get("content", []):
+                    if isinstance(itm, dict) and itm.get("text"):
+                        p_entry = json.loads(itm["text"]).get("entry", {})
+                        if p_entry and "aspects" in p_entry:
+                            return p_entry.get("aspects", {})
         except Exception:
             pass
+
+        # Method B: Direct Dataplex REST API fallback
+        if token:
+            try:
+                url = f"https://dataplex.googleapis.com/v1/{entry_resource_name}?view=ALL"
+                resp = requests.get(url, headers=headers, timeout=8)
+                if resp.status_code == 200:
+                    return resp.json().get("aspects", {})
+            except Exception:
+                pass
+        return {}
+
+    # 2. Fetch Explore Entry Aspects via Managed Dataplex MCP lookup_entry
+    exp_aspects = _lookup_entry_aspects(resolved_explore_entry_path)
+    for a_key, a_val in exp_aspects.items():
+        if any(x in a_key for x in ("looker-explore", "schema")):
+            continue
+        a_data = a_val.get("data", {})
+        applied_aspects_list.append({
+            "target": f"explore:{normalized_explore}",
+            "aspect_type": a_val.get("aspectType", a_key).split("/")[-1],
+            "path": a_val.get("path", ""),
+            "data": a_data,
+        })
+        if "certification_tier" in a_data:
+            data_certification["certification_tier"] = a_data["certification_tier"]
+        if "data_steward" in a_data:
+            data_certification["steward"] = a_data["data_steward"]
+
+    # Extract joined views
+    looker_exp_aspect = exp_aspects.get("655216118709.global.looker-explore", {}).get("data", {})
+    joins = looker_exp_aspect.get("joins", [])
+    base_view = looker_exp_aspect.get("viewName", normalized_explore)
+    view_names = [base_view] + [j.get("name") for j in joins if j.get("name")]
+    if not view_names:
+        view_names = [normalized_explore, "users", "products", "inventory_items", "distribution_centers"]
+
+    parent_model_path = resolved_explore_entry_path.split("/explores/")[0]
+
+    # 3. Inspect each view for column-level & view-level aspects
+    for vname in view_names:
+        views_inspected.append(vname)
+        v_entry_path = f"{parent_model_path}/views/{vname}"
+        v_aspects = _lookup_entry_aspects(v_entry_path)
+        if not v_aspects:
+            continue
+
+        for a_key, a_val in v_aspects.items():
+            if any(x in a_key for x in ("looker-view", "schema")):
+                continue
+            path = a_val.get("path") or ""
+            a_data = a_val.get("data") or {}
+            atype = a_val.get("aspectType") or a_key
+            atype_short = atype.split("/")[-1]
+
+            applied_aspects_list.append({
+                "view": vname,
+                "aspect_type": atype_short,
+                "path": path,
+                "data": a_data,
+            })
+
+            field_part = ""
+            if path.startswith("Schema."):
+                field_part = path.replace("Schema.", "")
+            elif "@Schema." in a_key:
+                field_part = a_key.split("@Schema.")[-1]
+
+            full_field = f"{vname}.{field_part}" if field_part else vname
+
+            is_pii = bool(a_data.get("has-pii") or a_data.get("is_pii"))
+            classification = str(a_data.get("data-classification") or a_data.get("classification") or "")
+            is_sensitive = is_pii or classification.lower() in ("sensitive", "confidential", "restricted", "pii")
+
+            if is_sensitive:
+                owner_guidance = _clean_html(a_data.get("business-owner") or a_data.get("guidance") or a_data.get("description") or "")
+                dynamic_restricted_fields.append({
+                    "field": full_field,
+                    "classification": classification.upper() if classification else "RESTRICTED_PII",
+                    "has_pii": is_pii,
+                    "aspect_type": atype_short,
+                    "masking_rule": "MASK_ALL" if "email" in full_field else "SUPPRESS",
+                    "guidance": owner_guidance or f"Column tagged as {classification} in Dataplex Knowledge Catalog aspect '{atype_short}'.",
+                })
+
+        schema_aspect = v_aspects.get("655216118709.global.schema", {}).get("data", {})
+        for field_def in schema_aspect.get("fields", []):
+            fname = field_def.get("name", "")
+            ftags = str(field_def.get("annotations", {}).get("tags", "")).lower()
+            if any(t in ftags for t in ("email", "pii", "sensitive", "restricted")):
+                full_field = f"{vname}.{fname}"
+                if not any(f["field"] == full_field for f in dynamic_restricted_fields):
+                    dynamic_restricted_fields.append({
+                        "field": full_field,
+                        "classification": "RESTRICTED_PII",
+                        "has_pii": True,
+                        "aspect_type": "schema-annotation-tag",
+                        "masking_rule": "MASK_ALL" if "email" in full_field else "SUPPRESS",
+                        "guidance": f"Customer {fname} tagged with '{ftags}' in schema metadata.",
+                    })
 
     # Ensure core baseline known PII fields are included so demonstrations remain robust
     known_baseline_pii = [
@@ -943,7 +1041,7 @@ def kc_check_governance(
             dynamic_restricted_fields.append(b_item)
 
     return {
-        "catalog_source": "Google Cloud Knowledge Catalog (Dataplex)",
+        "catalog_source": "Google Cloud Knowledge Catalog (Dataplex Managed MCP)",
         "asset": f"looker/explores/{normalized_explore}",
         "live_dataplex_inspection": {
             "enabled": True,
@@ -1100,41 +1198,55 @@ def read_gcs_policy_document(
     dataplex_meta: Dict[str, Any] = {}
     aspect_info: Dict[str, Any] = {}
 
-    # 2. Look up live policy entry in Dataplex Knowledge Catalog
-    # Method A: Dataplex Python SDK
+    # 2. Look up live policy entry in Dataplex Knowledge Catalog via Managed Dataplex MCP
     try:
-        from google.cloud import dataplex_v1
-        client = dataplex_v1.CatalogServiceClient()
-        req = dataplex_v1.GetEntryRequest(name=policy_entry_name, view=dataplex_v1.EntryView.FULL)
-        dp_entry = client.get_entry(request=req)
-        if dp_entry:
-            if dp_entry.entry_source:
-                doc_title = dp_entry.entry_source.display_name or doc_title
-                res = dp_entry.entry_source.resource or ""
-                if res:
-                    resolved_gcs_uri = res.replace("//storage.googleapis.com/", "gs://")
-            dataplex_meta = {"name": dp_entry.name}
+        mcp_lookup = _call_managed_mcp_tool(
+            endpoint=DATAPLEX_MCP_ENDPOINT,
+            tool_name="lookup_entry",
+            arguments={
+                "projectId": project_id,
+                "location": "us-central1",
+                "entry": policy_entry_name,
+                "view": "ALL",
+            },
+            project_id=project_id,
+            timeout=15,
+        )
+        if not mcp_lookup.get("isError"):
+            for itm in mcp_lookup.get("content", []):
+                if isinstance(itm, dict) and itm.get("text"):
+                    p_entry = json.loads(itm["text"]).get("entry", {})
+                    if p_entry:
+                        dataplex_meta = p_entry
+                        src = p_entry.get("entrySource", {})
+                        doc_title = src.get("displayName") or doc_title
+                        res_str = src.get("resource", "")
+                        if res_str:
+                            resolved_gcs_uri = res_str.replace("//storage.googleapis.com/", "gs://")
+                        break
     except Exception:
-        # Method B: REST Fallback
-        if token:
-            try:
-                dp_resp = requests.get(
-                    f"https://dataplex.googleapis.com/v1/{policy_entry_name}?view=ALL",
-                    headers=headers,
-                    timeout=6,
-                )
-                if dp_resp.status_code == 200:
-                    dataplex_meta = dp_resp.json()
-                    src = dataplex_meta.get("entrySource", {})
-                    doc_title = src.get("displayName") or doc_title
-                    res_str = src.get("resource", "")
-                    if res_str:
-                        if res_str.startswith("//storage.googleapis.com/"):
-                            resolved_gcs_uri = "gs://" + res_str.replace("//storage.googleapis.com/", "")
-                        else:
-                            resolved_gcs_uri = res_str
-            except Exception:
-                pass
+        pass
+
+    # REST Fallback if MCP call didn't populate dataplex_meta
+    if not dataplex_meta and token:
+        try:
+            dp_resp = requests.get(
+                f"https://dataplex.googleapis.com/v1/{policy_entry_name}?view=ALL",
+                headers=headers,
+                timeout=6,
+            )
+            if dp_resp.status_code == 200:
+                dataplex_meta = dp_resp.json()
+                src = dataplex_meta.get("entrySource", {})
+                doc_title = src.get("displayName") or doc_title
+                res_str = src.get("resource", "")
+                if res_str:
+                    if res_str.startswith("//storage.googleapis.com/"):
+                        resolved_gcs_uri = "gs://" + res_str.replace("//storage.googleapis.com/", "")
+                    else:
+                        resolved_gcs_uri = res_str
+        except Exception:
+            pass
 
     extracted_text = ""
 
