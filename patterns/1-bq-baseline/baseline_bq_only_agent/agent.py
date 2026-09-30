@@ -7,12 +7,14 @@ from google.oauth2.credentials import Credentials
 
 from baseline_bq_only_agent.bq_mcp_server import (
     _get_auth_token,
+    get_current_datetime,
     list_datasets,
     list_tables,
     get_table_schema,
     execute_bigquery_sql,
 )
 from baseline_bq_only_agent.prompt import BASELINE_ANALYST_PROMPT
+
 
 
 def _detect_default_project() -> str:
@@ -75,9 +77,11 @@ root_agent = LlmAgent(
     ),
     instruction=BASELINE_ANALYST_PROMPT,
     tools=[
+        get_current_datetime,
         list_datasets,
         list_tables,
         get_table_schema,
         execute_bigquery_sql,
     ],
 )
+

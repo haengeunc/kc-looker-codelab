@@ -3,13 +3,16 @@
 
 Delegates core BigQuery operations to the official Managed BigQuery MCP service
 (https://bigquery.googleapis.com/mcp) under the hood:
-1. list_datasets -> Managed BigQuery MCP list_dataset_ids
-2. list_tables -> Managed BigQuery MCP list_table_ids
-3. get_table_schema -> Managed BigQuery MCP get_table_info
-4. execute_bigquery_sql -> Managed BigQuery MCP execute_sql_readonly
+1. get_current_datetime -> Real-time UTC system datetime and calendar quarter bounds
+2. list_datasets -> Managed BigQuery MCP list_dataset_ids
+3. list_tables -> Managed BigQuery MCP list_table_ids
+4. get_table_schema -> Managed BigQuery MCP get_table_info
+5. execute_bigquery_sql -> Managed BigQuery MCP execute_sql_readonly
 """
 
 import base64
+import calendar
+import datetime
 import io
 import json
 import os
@@ -17,6 +20,7 @@ import shutil
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
+
 import requests
 import google.auth
 import google.auth.transport.requests
@@ -175,6 +179,54 @@ def _call_managed_bq_mcp(
         return result
     except Exception as e:
         return {"error": f"Failed calling Managed BigQuery MCP '{tool_name}': {str(e)}"}
+
+
+@mcp.tool()
+def get_current_datetime() -> Dict[str, Any]:
+    """Retrieve current system date, year, month, and standard Gregorian calendar periods.
+
+    ALWAYS call this tool when the user asks for relative calendar date ranges such as
+    'today', 'last quarter', 'this quarter', 'last month', 'YTD', or 'last year'.
+    Never guess or hardcode dates from obsolete years (e.g. 2023 or 2024).
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    current_year = now.year
+    current_month = now.month
+    current_calendar_quarter = (current_month - 1) // 3 + 1
+
+    if current_calendar_quarter > 1:
+        prev_calendar_quarter = current_calendar_quarter - 1
+        prev_calendar_quarter_year = current_year
+    else:
+        prev_calendar_quarter = 4
+        prev_calendar_quarter_year = current_year - 1
+
+    quarter_dates = {
+        1: ("01-01", "03-31"),
+        2: ("04-01", "06-30"),
+        3: ("07-01", "09-30"),
+        4: ("10-01", "12-31"),
+    }
+    prev_start = f"{prev_calendar_quarter_year}-{quarter_dates[prev_calendar_quarter][0]}"
+    prev_end = f"{prev_calendar_quarter_year}-{quarter_dates[prev_calendar_quarter][1]}"
+    curr_start = f"{current_year}-{quarter_dates[current_calendar_quarter][0]}"
+    curr_end = f"{current_year}-{quarter_dates[current_calendar_quarter][1]}"
+
+    return {
+        "current_timestamp_utc": now.isoformat(),
+        "current_date": now.strftime("%Y-%m-%d"),
+        "current_year": current_year,
+        "current_month": current_month,
+        "current_calendar_quarter": f"Q{current_calendar_quarter} {current_year}",
+        "current_calendar_quarter_range": f"{curr_start} to {curr_end}",
+        "last_completed_calendar_quarter": f"Q{prev_calendar_quarter} {prev_calendar_quarter_year}",
+        "last_completed_calendar_quarter_range": f"{prev_start} to {prev_end}",
+        "sql_filter_recommendations": {
+            "last_completed_quarter": f"BETWEEN '{prev_start}' AND '{prev_end}'",
+            "current_quarter": f"BETWEEN '{curr_start}' AND '{now.strftime('%Y-%m-%d')}'",
+            "current_year": f"EXTRACT(YEAR FROM created_at) = {current_year}",
+        },
+    }
 
 
 @mcp.tool()

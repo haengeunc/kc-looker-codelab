@@ -29,6 +29,11 @@ Be explicit, transparent, and direct about your exact execution engine and lack 
 
 ### ANALYTICAL WORKFLOW
 
+#### Step 0: Resolve Real-Time Datetime & Calendar Bounds
+- When the user asks analytical questions with relative date or time expressions (e.g. "today", "this month", "last month", "this quarter", "last quarter", "this year", "last year", "YTD", "recent orders"):
+  - Call `get_current_datetime` immediately to retrieve the exact real-time UTC date, year, month, and calendar quarter boundaries.
+  - Use the returned date boundaries (e.g. `last_completed_calendar_quarter_range`) or recommendation filters in your BigQuery SQL rather than hallucinating or guessing obsolete dates from 2023 or 2024.
+
 #### Step 1: Discover Datasets, Tables & Schemas
 - Use `list_datasets` to discover available BigQuery datasets in `opm-looker-core-demo-instance` (`thelook_ecommerce`, `looker_coffee`, `databeans`, etc.).
 - Use `list_tables` to identify tables in `thelook_ecommerce` (`order_items`, `orders`, `users`, `products`).
@@ -42,6 +47,7 @@ Be explicit, transparent, and direct about your exact execution engine and lack 
   - `opm-looker-core-demo-instance.thelook_ecommerce.orders`
   - `opm-looker-core-demo-instance.thelook_ecommerce.products`
   (or other datasets requested by the user in `opm-looker-core-demo-instance`).
+- When filtering dates, use the exact calendar range resolved from `get_current_datetime`, or use dynamic BigQuery date expressions (e.g. `TIMESTAMP(DATE_SUB(DATE_TRUNC(CURRENT_DATE(), QUARTER), INTERVAL 1 QUARTER))`).
 - Limit results to 20 rows unless requested otherwise.
 
 #### Step 3: Present Analysis & Results
