@@ -104,6 +104,48 @@ LOOKER_MCP_ENDPOINT = os.environ.get("LOOKER_MCP_ENDPOINT", "https://looker.goog
 DATAPLEX_MCP_ENDPOINT = os.environ.get("DATAPLEX_MCP_ENDPOINT", "https://dataplex.googleapis.com/mcp")
 
 _GCP_TOKEN: Dict[str, Any] = {"token": None, "expires_at": 0}
+_LOOKER_TOKEN: Dict[str, Any] = {"token": None, "expires_at": 0}
+
+
+def _get_looker_auth_token() -> str:
+    """Acquires a valid Looker access token for Looker API calls (client credentials or GCP token)."""
+    now = time.time()
+    if _LOOKER_TOKEN["token"] and now < _LOOKER_TOKEN["expires_at"]:
+        return _LOOKER_TOKEN["token"]
+
+    if LOOKER_CLIENT_ID and LOOKER_CLIENT_SECRET:
+        try:
+            login_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/login"
+            resp = requests.post(
+                login_url,
+                data={"client_id": LOOKER_CLIENT_ID, "client_secret": LOOKER_CLIENT_SECRET},
+                timeout=12,
+            )
+            if resp.status_code == 200:
+                tdata = resp.json()
+                tok = tdata.get("access_token")
+                exp = tdata.get("expires_in", 3600)
+                if tok:
+                    _LOOKER_TOKEN["token"] = tok
+                    _LOOKER_TOKEN["expires_at"] = now + exp - 60
+                    # Ensure dev workspace if configured
+                    if LOOKER_WORKSPACE:
+                        try:
+                            requests.patch(
+                                f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/session",
+                                headers={"Authorization": f"token {tok}", "Content-Type": "application/json"},
+                                json={"workspace_id": LOOKER_WORKSPACE},
+                                timeout=6,
+                            )
+                        except Exception:
+                            pass
+                    return tok
+        except Exception:
+            pass
+
+    # Fallback to GCP token if client credentials not set
+    gcp_tok = _get_gcp_token()
+    return gcp_tok
 
 
 def _clean_html(text: Any) -> str:
@@ -550,8 +592,9 @@ def looker_query(
     expanded_url = None
     if not managed_mcp_success:
         try:
-            gcp_token = _get_gcp_token()
-            headers = {"Authorization": f"Bearer {gcp_token}", "Content-Type": "application/json"}
+            looker_tok = _get_looker_auth_token()
+            auth_header = f"token {looker_tok}" if LOOKER_CLIENT_ID and LOOKER_CLIENT_SECRET else f"Bearer {looker_tok}"
+            headers = {"Authorization": auth_header, "Content-Type": "application/json"}
             create_query_url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/queries"
             query_payload = {
                 "model": model,
@@ -687,8 +730,9 @@ def looker_get_fields(
     # 2. Resilient fallback: Direct Looker REST API
     if not dimensions and not measures:
         try:
-            gcp_token = _get_gcp_token()
-            headers = {"Authorization": f"Bearer {gcp_token}"}
+            looker_tok = _get_looker_auth_token()
+            auth_header = f"token {looker_tok}" if LOOKER_CLIENT_ID and LOOKER_CLIENT_SECRET else f"Bearer {looker_tok}"
+            headers = {"Authorization": auth_header}
             url = f"{LOOKER_BASE_URL.rstrip('/')}/api/4.0/lookml_models/{model}/explores/{explore}"
             resp = requests.get(url, headers=headers, timeout=20)
             if resp.status_code == 200:
