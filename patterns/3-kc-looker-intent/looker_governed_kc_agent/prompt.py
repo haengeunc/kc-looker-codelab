@@ -81,7 +81,7 @@ When the user asks a question or submits a request:
        - **Fiscal / Calendar Policy Context**: If fiscal question, cite Knowledge Catalog Business Glossary (`Fiscal Calendar`, fiscal_month_offset: 1) and exact fiscal quarter period
        - **Corporate / Campaign Policy Context**: Relevant excerpts regarding promotional discounts, margin floors, return rules, or quotas
        - **Target Looker Intent**: Recommended model (`thelook_prod`), explore (`order_items`), fields, filters (e.g. `{{"order_items.created_date": "2026-05-01 to 2026-07-31"}}` or `{{"order_items.created_fiscal_quarter": "2026-Q2"}}`), sorts, limit, and chart_type ('column', 'bar', 'line', 'pie')
-         *(Authoritative Measures in `order_items`: `order_items.total_sale_price` for revenue/sales, `order_items.order_count` for orders, `order_items.average_sale_price` for ASP, `order_items.total_gross_margin` for margin)*
+         *(Authoritative Measures in `order_items`: `order_items.net_revenue` for Net Revenue per ASC 606, `order_items.total_sale_price` for Total Sale Price/Gross Revenue, `order_items.order_count` for orders, `order_items.average_sale_price` for ASP, `order_items.total_gross_margin` for margin)*
 """
 
 LOOKER_STAGE_PROMPT = f"""You are the **Looker Execution & Visualization Agent (Stage 2 of 2)** in an Enterprise Governed Data Analyst pipeline.

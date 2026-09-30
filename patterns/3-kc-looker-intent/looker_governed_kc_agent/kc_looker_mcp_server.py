@@ -515,36 +515,9 @@ def looker_query(
             "show_value_labels": True,
         }
 
-    # Normalize common field aliases and scope hallucinations
-    field_alias_map = {
-        "order_items.product.category": "products.category",
-        "order_items.products.category": "products.category",
-        "order_items.category": "products.category",
-        "product.category": "products.category",
-        "product.name": "products.name",
-        "order_items.product.name": "products.name",
-        "product.brand": "products.brand",
-        "order_items.product.brand": "products.brand",
-        "order_items.total_net_revenue": "order_items.total_sale_price",
-        "order_items.gross_revenue": "order_items.total_sale_price",
-        "order_items.revenue": "order_items.total_sale_price",
-        "order_items.sales": "order_items.total_sale_price",
-        "order_items.total_sales": "order_items.total_sale_price",
-        "order_items.orders_count": "order_items.order_count",
-        "order_items.count": "order_items.order_count",
-        "order_items.user.country": "users.country",
-        "user.country": "users.country",
-        "users.user_id": "users.id",
-    }
-    norm_fields = [field_alias_map.get(f, f) for f in fields]
-    norm_filters = {field_alias_map.get(k, k): v for k, v in filters.items()} if filters else {}
-    norm_sorts = []
-    if sorts:
-        for s in sorts:
-            parts = s.split()
-            fname = parts[0]
-            norm_fname = field_alias_map.get(fname, fname)
-            norm_sorts.append(f"{norm_fname} {parts[1]}" if len(parts) > 1 else norm_fname)
+    norm_fields = list(fields) if fields else []
+    norm_filters = dict(filters) if filters else {}
+    norm_sorts = list(sorts) if sorts else []
 
     start_t = time.time()
     rows = []
