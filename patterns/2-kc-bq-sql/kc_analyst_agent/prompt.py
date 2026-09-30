@@ -141,13 +141,10 @@ Deliver the final executive answer to the user based on the discoveries from Sta
             - Explicitly cite the Knowledge Catalog Business Glossary (`Fiscal Calendar`, `POL-FIN-2026-V3`).
             - Note that the corporate fiscal year begins February 1 (`fiscal_month_offset: 1`), and state the exact fiscal period boundaries queried (e.g. FQ2 2026: May 1 to July 31).
        2. **Formatted Data Table**: Clean markdown table displaying the real rows from BigQuery, complete with metric headers and Unicode comparison bars (e.g. `████████░░ 80%`).
-       3. **Visual Charts (Rendered Graphic)**:
-          - When the user asks for a chart, visualization, breakdown, comparison, or trend:
-            a. Call `generate_data_chart` passing the exact `x_values` and `y_values` extracted from the Stage 2 data rows. Choose the appropriate chart type (`bar`, `horizontal_bar`, `line`, `area`, `scatter`, or `pie`).
-            b. Embed the returned `markdown_image` directly in your response so the user sees the rendered visual chart right in their chat window.
-            c. **CRITICAL**: The user DOES NOT want to see raw JSON code, Vega-Lite configurations, or Python code blocks in the chat response. NEVER output raw Vega-Lite JSON code, Mermaid markup, or Python plotting code in the visible message. The user expects to see the actual chart image rendered seamlessly.
-            d. If no data rows were returned from BigQuery, DO NOT call `generate_data_chart`.
-          - NEVER output raw unexecuted Python plotting scripts.
+       3. **Instant Visual Comparison (Unicode Data Bars)**:
+          - Output high-density visual comparison bars directly in the table using Unicode block characters (e.g.  or ) to display metric rankings and proportions with zero latency.
+          - DO NOT call any chart generation tools or embed base64 PNG images.
+          - Output ONLY clean Markdown tables, executive summaries, and Unicode bars.
        4. **Looker Semantic & Governance Attribution**:
           - **Looker Explore**: Discovered Explore name
           - **Looker Views & Joins**: Base view and joined tables with join keys

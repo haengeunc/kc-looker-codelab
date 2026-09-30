@@ -19,9 +19,8 @@ from kc_analyst_agent.kc_bq_mcp_server import (
     check_lookml_in_knowledge_catalog,
     read_gcs_policy_document,
     execute_bigquery_sql,
-    generate_data_chart,
-    generate_vega_lite_chart,
 )
+
 from kc_analyst_agent.prompt import (
     DISCOVERY_STAGE_PROMPT,
     SQL_STAGE_PROMPT,
@@ -118,16 +117,15 @@ sql_execution_agent = LlmAgent(
     ],
 )
 
-# Stage 3: Presentation, Visualizations & Governance Attribution
+# Stage 3: Presentation & Governance Attribution
 presentation_agent = LlmAgent(
     model=DEFAULT_MODEL,
     name="presentation_agent",
-    description="Formats executive answers, renders data visualizations (Matplotlib PNG image), and attributes Looker governance.",
+    description="Formats executive answers, visual Unicode metric bars, and attributes Looker governance.",
     instruction=PRESENTATION_STAGE_PROMPT,
-    tools=[
-        generate_data_chart,
-    ],
+    tools=[],
 )
+
 
 # Root Sequential Pipeline
 root_agent = SequentialAgent(
