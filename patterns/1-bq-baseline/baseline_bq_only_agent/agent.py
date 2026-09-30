@@ -11,7 +11,6 @@ from baseline_bq_only_agent.bq_mcp_server import (
     list_tables,
     get_table_schema,
     execute_bigquery_sql,
-    generate_data_chart,
 )
 from baseline_bq_only_agent.prompt import BASELINE_ANALYST_PROMPT
 
@@ -80,6 +79,5 @@ root_agent = LlmAgent(
         list_tables,
         get_table_schema,
         execute_bigquery_sql,
-        generate_data_chart,
     ],
 )
