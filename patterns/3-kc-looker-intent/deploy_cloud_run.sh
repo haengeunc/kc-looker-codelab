@@ -49,8 +49,8 @@ echo "Deploying via adk deploy cloud_run (with Web UI enabled)..."
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
   --env LOOKER_BASE_URL="${LOOKER_BASE_URL:-https://looker.cloud-bi-opm.com}" \
-  --env LOOKER_CLIENT_ID="${LOOKER_CLIENT_ID:-B3T44CSKfBXQ7dCWQhjP}" \
-  --env LOOKER_CLIENT_SECRET="${LOOKER_CLIENT_SECRET:-BpjRy4nq6Q6cJnysjF6SQfm7}" \
+  --env LOOKER_CLIENT_ID="${LOOKER_CLIENT_ID:-}" \
+  --env LOOKER_CLIENT_SECRET="${LOOKER_CLIENT_SECRET:-}" \
   --env LOOKER_MODEL_NAME="${LOOKER_MODEL_NAME:-thelook_prod}" \
   "${SCRIPT_DIR}/looker_governed_kc_agent" \
   -- --allow-unauthenticated

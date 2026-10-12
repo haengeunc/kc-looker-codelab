@@ -13,6 +13,14 @@ looker_analyst_agent_tmp*/
 
 # Secrets & environment
 .env
+.env.*
+*.env
+looker.ini
+*.pem
+*.key
+*.cert
+*credential*.json
+service-account*.json
 *.json
 !package.json
 !manifest.json
