@@ -38,6 +38,17 @@ elif [[ -x "${SCRIPT_DIR}/.venv/bin/adk" ]]; then
   ADK_BIN="${SCRIPT_DIR}/.venv/bin/adk"
 fi
 
+# Prepare secrets flag if secrets exist or are specified
+SECRETS_FLAG=()
+LOOKER_CLIENT_ID_SECRET="${LOOKER_CLIENT_ID_SECRET:-looker-client-id}"
+LOOKER_CLIENT_SECRET_SECRET="${LOOKER_CLIENT_SECRET_SECRET:-looker-client-secret}"
+
+if gcloud secrets describe "$LOOKER_CLIENT_ID_SECRET" --project="$PROJECT_ID" >/dev/null 2>&1 && \
+   gcloud secrets describe "$LOOKER_CLIENT_SECRET_SECRET" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  echo "Found Secret Manager secrets: $LOOKER_CLIENT_ID_SECRET, $LOOKER_CLIENT_SECRET_SECRET"
+  SECRETS_FLAG=("--set-secrets" "LOOKER_CLIENT_ID=${LOOKER_CLIENT_ID_SECRET}:latest,LOOKER_CLIENT_SECRET=${LOOKER_CLIENT_SECRET_SECRET}:latest")
+fi
+
 echo "Deploying via adk deploy cloud_run (with Web UI enabled)..."
 "$ADK_BIN" deploy cloud_run \
   --project="$PROJECT_ID" \
@@ -49,8 +60,7 @@ echo "Deploying via adk deploy cloud_run (with Web UI enabled)..."
   --env GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
   --env GOOGLE_CLOUD_LOCATION="$REGION" \
   --env LOOKER_BASE_URL="${LOOKER_BASE_URL:-https://looker.cloud-bi-opm.com}" \
-  --env LOOKER_CLIENT_ID="${LOOKER_CLIENT_ID:-}" \
-  --env LOOKER_CLIENT_SECRET="${LOOKER_CLIENT_SECRET:-}" \
   --env LOOKER_MODEL_NAME="${LOOKER_MODEL_NAME:-thelook_prod}" \
+  "${SECRETS_FLAG[@]}" \
   "${SCRIPT_DIR}/looker_governed_kc_agent" \
   -- --allow-unauthenticated
